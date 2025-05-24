@@ -1,0 +1,347 @@
+import yaml
+import argparse
+from pprint import pprint
+import torch
+import os
+from byprot import utils
+from byprot.models.lm.cfp_gen import CondDiffusionProteinLanguageModel
+import pandas as pd
+from omegaconf import DictConfig
+import pyrootutils
+import pickle
+from tqdm import tqdm
+import random
+import numpy as np
+import time
+import multiprocessing as mp
+from torch.cuda.amp import autocast
+import traceback
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_mask_ratio=0.1):
+    """
+    在整个序列中，根据 motif_start_end 指定的位置进行保留，
+    若 motif_start_end 为空，则在整个有效序列范围内随机选择 5%~10% 的片段进行保留，其他位置填充 mask_id。
+
+    参数：
+    - target (torch.Tensor): 目标序列张量，形状为 (batch_size, sequence_length)。
+    - motif_start_end (torch.Tensor): 形状为 (batch_size, 2)，每个条目包含起始和终止位点。
+    - min_mask_ratio (float): 需要保留的最小比例，相对于序列总长度。
+    - max_mask_ratio (float): 需要保留的最大比例，相对于序列总长度。
+
+    返回：
+    - masked_target (torch.Tensor): 经过 mask 处理的张量，形状与 target 相同。
+    """
+    batch_size, sequence_length = target.shape
+    masked_targets = []
+
+    for i in range(batch_size):
+        current_target = target[i].clone()
+
+        # 获取非特殊符号的位置掩码（有效序列）
+        non_special_sym_mask = (
+                (current_target != model.pad_id) &
+                (current_target != model.bos_id) &
+                (current_target != model.eos_id)
+        )
+        effective_indices = torch.where(non_special_sym_mask)[0]
+
+        if len(effective_indices) == 0:
+            # 如果全是特殊符号，直接填充 mask_id
+            masked_targets.append(torch.full_like(current_target, fill_value=model.mask_id))
+            continue
+
+        total_length = len(effective_indices)
+        retain_min_len = max(10, int(min_mask_ratio * total_length))
+        retain_max_len = max(30, int(max_mask_ratio * total_length))
+
+        # **Step 1: 处理 motif_start_end**
+        start, end = motif_start_end[i]
+
+        if start == 0 and end == 0:
+            # **motif_start_end 为空，在有效区域内随机选择 5%~10% 长度的片段**
+            retain_length = torch.randint(retain_min_len, retain_max_len + 1, (1,)).item()
+            retain_start_idx = torch.randint(0, total_length - retain_length + 1, (1,)).item()
+            retain_start = effective_indices[retain_start_idx].item()
+            retain_end = effective_indices[retain_start_idx + retain_length - 1].item()
+        else:
+            # **motif_start_end 存在，调整其长度**
+            motif_length = end - start
+            if motif_length < retain_min_len:
+                # **如果 motif 太短，则扩展到 `5%` 长度**
+                retain_length = retain_min_len
+            elif motif_length > retain_max_len:
+                # **如果 motif 太长，则缩短到 `10%` 长度**
+                retain_length = retain_max_len
+            else:
+                # **长度合理，使用 motif_length**
+                retain_length = motif_length
+
+            # **在 `start` 到 `end - retain_length` 之间随机选取 `retain_start`**
+            if end - start - retain_length > 0:
+                retain_start = torch.randint(start, end - retain_length + 1, (1,)).item()
+            else:
+                retain_start = start  # 仅在长度足够时随机，否则从 start 开始
+
+            retain_end = retain_start + retain_length - 1
+
+        # **Step 2: 生成最终掩码**
+        sequence_indices = torch.arange(sequence_length, device=target.device)
+        mask = non_special_sym_mask & ((sequence_indices < retain_start) | (sequence_indices > retain_end))
+        masked_target = current_target.clone()
+        masked_target[mask] = model.mask_id
+
+        masked_targets.append(masked_target)
+
+    return torch.stack(masked_targets)
+
+def get_motif_middle_len(target, model, motif_start_end, motif_len_min=10, motif_len_max=30, seq_len=200):
+
+    batch_size = target.shape[0]
+    masked_targets = []
+
+    for i in range(batch_size):
+        current_target = target[i].clone()
+        if sum(motif_start_end[i]) == 0:
+            # 如果 motif_start_end 为空，从有效位置中随机选择起止位点
+            non_special_sym_mask = (
+                    (current_target != model.pad_id) &
+                    (current_target != model.bos_id) &
+                    (current_target != model.eos_id)
+            )
+            effective_indices = torch.where(non_special_sym_mask)[0]
+            if len(effective_indices) == 0:
+                masked_targets.append(torch.full_like(current_target, fill_value=model.mask_id))
+                continue
+
+            start = effective_indices[0].item()
+            end = effective_indices[-1].item()
+        else:
+            start, end = motif_start_end[i]
+
+        motif_length = end - start
+
+        # 如果 motif 长度小于最小长度，则使用 motif 的原始长度
+        if motif_length < motif_len_min:
+            crop_len = motif_length
+        else:
+            crop_len = min(torch.randint(motif_len_min, min(motif_len_max, motif_length) + 1, (1,)).item(), motif_length)
+
+        # 获取非特殊符号的位置掩码
+        non_special_sym_mask = (
+                (current_target != model.pad_id) &
+                (current_target != model.bos_id) &
+                (current_target != model.eos_id)
+        )
+
+        # 确定 motif 应该放置的位置，使其尽量位于序列中间，并考虑 seq_len 的限制
+        effective_indices = torch.where(non_special_sym_mask)[0]
+        if len(effective_indices) == 0:
+            masked_targets.append(torch.full((seq_len,), fill_value=model.mask_id, dtype=current_target.dtype))
+            continue
+
+        middle_position = (effective_indices[0] + effective_indices[-1]) // 2
+        crop_start = max(middle_position - crop_len // 2, effective_indices[0])
+        crop_end = min(crop_start + crop_len, effective_indices[-1] + 1)
+        crop_start = crop_end - crop_len  # 确保 motif 长度正确
+
+        # 创建一个新的序列，并将其初始化
+        new_target = torch.full((seq_len+2,), fill_value=model.mask_id, dtype=current_target.dtype)
+        new_target[0] = model.bos_id
+        new_target[-1] = model.eos_id
+
+        # 将 current_target[crop_start:crop_end] 部分复制到新序列的中间位置
+        insert_start = (seq_len+2 - crop_len) // 2
+        insert_end = insert_start + crop_len
+        new_target[insert_start:insert_end] = current_target[crop_start:crop_end]
+
+
+        masked_targets.append(new_target)
+
+    # 将所有处理后的序列拼接成一个张量
+    masked_target = torch.stack(masked_targets)
+
+    return masked_target
+
+def get_initial(config, model, sample, length, tokenizer, device, sequence):
+
+    go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
+    ipr_label = sample['ipr_mapped']
+    ec_labels = sample.get('EC_mapped', None)
+
+    if config.get('use_seq_motif', False):
+        motif_info = sample.get('motif', [])
+        if motif_info:
+            motif_start_end = [[motif['start'], motif['end']] for motif in motif_info][0]
+        else:
+            motif_start_end = [0, 0]
+        shift = random.randint(-30, 30)
+        length = len(sequence) + shift
+        # length = len(sequence)
+
+    seq = ['<mask>'] * length
+
+    seq = [''.join(seq)]
+    init_seq = seq * 1 #config['num_seqs']
+    batch = tokenizer.batch_encode_plus(init_seq,
+                                        add_special_tokens=True,
+                                        padding="longest",
+                                        return_tensors='pt')
+
+    if config.get('use_seq_motif', False):
+        seq_cond = tokenizer.batch_encode_plus([sequence],
+                                               add_special_tokens=True,
+                                               padding="longest",
+                                               return_tensors='pt')['input_ids']
+        seq_cond = get_motif_gt_pos(seq_cond, model, torch.tensor(motif_start_end).unsqueeze(0))
+
+
+    out_batch = {
+        'input_ids': batch['input_ids'],
+        'input_mask': batch['attention_mask'].bool(),
+    }
+
+    # Annotation tags
+    if config.get('use_go', False) and go_labels is not None:
+        out_batch['go_label'] = torch.tensor(go_labels)
+
+    if config.get('use_ipr', False) and ipr_label is not None:
+        out_batch['ipr_label'] = torch.tensor(ipr_label)
+
+    if config.get('use_ec', False) and ec_labels is not None:
+        out_batch['ec_label'] = torch.tensor(ec_labels)
+
+    if config.get('use_seq_motif', False):
+        out_batch['seq_cond'] = seq_cond
+
+    return utils.recursive_to(out_batch, device)
+
+
+def load_config(config_path):
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    return config
+
+
+def split_data_sequentially(data, num_splits):
+    split_size = len(data) // num_splits
+    remainder = len(data) % num_splits
+
+    splits = []
+    start_idx = 0
+    for i in range(num_splits):
+        end_idx = start_idx + split_size + (1 if i < remainder else 0)
+        splits.append(data[start_idx:end_idx])
+        start_idx = end_idx
+
+    return splits
+
+
+def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
+    try:
+        print(f"Starting processing on GPU {gpu_idx} with {len(part_data)} sequences...")
+
+        model = CondDiffusionProteinLanguageModel.from_pretrained(config['ckpt_path'])
+        model = model.eval().cuda(gpu_idx)
+        tokenizer = model.tokenizer
+
+        set_seed(config.get('seed', 42) + gpu_idx)
+
+        with open(part_fasta_filename, 'a') as fp_save:
+            for index, row in enumerate(part_data):
+
+                sequence = row['sequence']
+                seq_id = row['uniprot_id']
+
+                print(f"Generating for protein {seq_id} on GPU {gpu_idx}:")
+
+                seq_len = random.randint(config['seq_lens'][0], config['seq_lens'][1])
+                device = torch.device(f"cuda:{gpu_idx}")
+                batch = get_initial(config, model, row, seq_len, tokenizer, device, sequence)
+
+                partial_mask = batch['input_ids'].ne(model.mask_id).type_as(batch['input_mask'])
+
+                with autocast():
+                    outputs = model.generate(batch=batch, tokenizer=tokenizer,
+                                             max_iter=config['max_iter'],
+                                             sampling_strategy=config['sampling_strategy'],
+                                             partial_masks=partial_mask)
+                output_tokens = outputs[0]
+                output_results = tokenizer.batch_decode(output_tokens, skip_special_tokens=True)
+
+                for _, seq in enumerate(output_results):
+                    seq = seq.replace(" ", "")
+                    fp_save.write(f">SEQUENCE_ID={seq_id}_L={seq_len}\n")
+                    fp_save.write(f"{seq}\n")
+
+        print(f"Finished processing on GPU {gpu_idx}.")
+
+    except Exception as e:
+        print(f"Error occurred on GPU {gpu_idx}: {e}")
+        traceback.print_exc()
+
+
+def main(config):
+
+    # multi-process
+    mp.set_start_method('spawn', force=True)
+
+    with open(config['input_data'], 'rb') as f:
+        input_data = pickle.load(f)
+
+    # detect multi-gpu
+    gpu_num = torch.cuda.device_count()
+    if gpu_num == 0:
+        raise RuntimeError("No GPU devices found!")
+
+    print(f"Detected {gpu_num} GPUs.")
+
+    os.makedirs(config['saveto'], exist_ok=True)
+    basename = os.path.basename(os.path.dirname(os.path.dirname(config['ckpt_path'])))
+
+    start_time = time.time()
+
+    if gpu_num == 1:
+        final_fasta_filename = os.path.join(config['saveto'], f"{basename}_{config['run_name']}.fasta")
+        process_on_gpu(0, input_data, config, final_fasta_filename)
+    else:
+        part_filenames = [
+            os.path.join(config['saveto'], f"{basename}_{config['run_name']}_part_{i}.fasta") for i in range(gpu_num)
+        ]
+        data_parts = split_data_sequentially(input_data, gpu_num)
+        processes = []
+        for gpu_idx, part_data in enumerate(data_parts):
+            p = mp.Process(target=process_on_gpu, args=(gpu_idx, part_data, config, part_filenames[gpu_idx]))
+            processes.append(p)
+            p.start()
+
+        for p in processes:
+            p.join()
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    hours = int(elapsed_time // 3600)
+    minutes = int((elapsed_time % 3600) // 60)
+    seconds = int(elapsed_time % 60)
+    print(f"Total computation time: {hours} hours, {minutes} minutes, {seconds} seconds")
+
+    if gpu_num > 1:
+        final_fasta_filename = os.path.join(config['saveto'], f"{basename}_{config['run_name']}.fasta")
+        with open(final_fasta_filename, 'w') as final_fp:
+            for part_fasta_filename in part_filenames:
+                with open(part_fasta_filename, 'r') as part_fp:
+                    final_fp.write(part_fp.read())
+
+        print(f"All parts have been merged into {final_fasta_filename}")
+
+
+if __name__ == '__main__':
+    config_path = 'configs/test_cfpgen.yaml'
+    config = load_config(config_path)
+    main(config)

@@ -1,0 +1,105 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - /datamodule: uniprotKB
+  - /callbacks: lm
+  - /trainer: ddp_fp16
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+# name of the run determines folder name in logs
+project: "CFPGen_650m"
+name: "cfpgen_general_dataset_stage2"
+
+datamodule:
+  max_tokens: 4096 # batch size
+  max_len: 1022
+  mini_run: false
+
+model:
+  _target_: cfp_gen
+  num_diffusion_timesteps: 500
+  gradient_ckpt: false
+  rdm_couple: false
+  cond:
+    use_go: true
+    go_num: 375
+    go_drop: 0.5
+    use_ipr: true
+    ipr_num: 1154
+    ipr_drop: 0.5
+    use_ec: false
+    ec_num: 661
+    ec_drop: 0
+    use_seq_motif: true
+    motif_min_len: 10
+    motif_max_len: 30
+
+  lora:
+    lora: false
+    lora_rank: 16
+    lora_dropout: 0.1
+    lora_target_module: (esm.encoder.layer.[0-9]*.attention.(self.query|self.key|self.value|output.dense).*|esm.encoder.layer.[0-9]*.(intermediate|output).dense.*)
+    modules_to_save: lm_head,esm.embeddings
+  net:
+    arch_type: func_esm
+    name: facebook/esm2_t33_650M_UR50D
+    dropout: 0.1
+    pretrain: true
+    pretrained_model_name_or_path: ${paths.root_dir}/pretrained/cfpgen_general_dataset_stage1.ckpt  # stage 2
+
+
+task:
+  _target_: lm/cfp_gen
+  learning:
+    noise: random_mask # enable cmlm training with uniform random masking
+    watch_t1_t2_loss: false
+    cal_constant_loss: false
+    weight: linear
+  criterion:
+    _target_: byprot.modules.cross_entropy.RDMCrossEntropyLoss
+    label_smoothing: 0.0
+    ignore_index: 1
+  optimizer:
+    type: adamw
+    _partial_: true
+    lr: ${train.lr}
+    pretrained_model_name_or_path: ${model.net.pretrained_model_name_or_path}
+    pretrained_lr_ratio: 0.0
+    betas:
+      - 0.9
+      - 0.98
+    weight_decay: 0.01
+  lr_scheduler:
+    type: polynomial
+    warmup_steps: 2000
+    total_steps: ${trainer.max_steps}
+    lr: ${train.lr}
+    lr_end: 1e-5
+    warmup_init_lr: 1e-07
+    power: 1
+
+train:
+  seed: 42
+  lr: 0.00004
+  monitor: "val/loss"
+  mode: "min"
+  patience: 1000
+
+trainer:
+  min_epochs: 10
+  max_epochs: 10000
+  gradient_clip_val: 0.0
+  num_sanity_val_steps: 0
+  reload_dataloaders_every_n_epochs: 1
+  use_distributed_sampler: false
+  max_steps: 200_000
+  accumulate_grad_batches: 32  # 32 with 4 GPUs
+  check_val_every_n_epoch: null
+  val_check_interval: 50
+  enable_progress_bar: true
+  num_nodes: 1

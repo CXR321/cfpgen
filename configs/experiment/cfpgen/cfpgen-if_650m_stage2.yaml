@@ -1,0 +1,123 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - /datamodule: uniprotKB_if
+  - /callbacks: fixedbb
+  - /trainer: ddp_fp16
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+
+# name of the run determines folder name in logs
+project: "CFPGen_650m"
+name: "cfpgen-if_650m_stage2"  # finetune structure adapter
+
+datamodule:
+  alphabet:
+    name: esm
+    featurizer: cath
+    featurizer_cfg:
+      coord_nan_to_zero: false
+
+model:
+  _target_: cfpgen_if
+  decoder:
+    num_diffusion_timesteps: 100
+    adapter_dropout: 0.1
+    dplm_name: airkingbd/dplm_650m
+    encoder_d_model: ${model.encoder.d_model}
+    arch_type: func_esm_if
+    gradient_ckpt: false
+    rdm_couple: false
+    cond:
+      use_go: true
+      go_num: 375
+      go_drop: 0.5
+      use_ipr: true
+      ipr_num: 1154
+      ipr_drop: 0.5
+      use_ec: false
+      ec_num: 661
+      ec_drop: 0
+      use_seq_motif: false
+      motif_min_len: 10
+      motif_max_len: 30
+      use_struc_bb: true
+    lora:
+      lora: false
+      lora_rank: 16
+      lora_dropout: 0.1
+      lora_target_module: (esm.encoder.layer.[0-9]*.attention.(self.query|self.key|self.value|output.dense).*|esm.encoder.layer.[0-9]*.(intermediate|output).dense.*)
+      modules_to_save: lm_head,esm.embeddings
+    name: facebook/esm2_t33_650M_UR50D
+    pretrain: true
+    pretrained_model_name_or_path: ${paths.root_dir}/pretrained/cfpgen_650m_cath43_for_SFT.ckpt  # use for stage2: finetune on uniproKB
+
+
+  encoder:
+    _target_: gvp_trans_encoder
+    output_logits: ${task.learning.output_encoder_logits}
+    d_model: 512
+
+  init_pred_where: true
+
+task:
+  _target_: lm/cond_dplm
+  alphabet: ${datamodule.alphabet}
+  learning:
+    noise: random_mask # enable cmlm training with uniform random masking
+    watch_t1_t2_loss: false
+    cal_constant_loss: false
+    weight: linear
+    output_encoder_logits: true
+  criterion:
+    _target_: byprot.modules.cross_entropy.RDMCrossEntropyLoss
+    label_smoothing: 0.0
+    ignore_index: 1
+
+  optimizer:
+    type: adamw
+    _partial_: true
+    lr: ${train.lr}
+    betas:
+      - 0.9
+      - 0.98
+    weight_decay: 0.0001
+
+  lr_scheduler:
+    type: noam
+    warmup_steps: 4000
+    model_size: 128
+    lr: ${train.lr}
+    warmup_init_lr: 1e-07
+
+  generator:
+    max_iter: 10
+    strategy: 'discrete_diffusion'
+    temperature: 1.0
+    run_name: 'default'
+    eval_plddt: False
+    sampling_strategy: 'argmax'
+    use_draft_seq: true
+
+train:
+  seed: 42
+  lr: 0.001
+  monitor: "val/acc_median"
+  mode: "max"
+
+trainer:
+  min_epochs: 10
+  max_epochs: 10000
+  gradient_clip_val: 0.0
+  num_sanity_val_steps: 1
+  reload_dataloaders_every_n_epochs: 1
+  use_distributed_sampler: false
+  max_steps: 200_000
+  accumulate_grad_batches: 32
+  check_val_every_n_epoch: null
+  val_check_interval: 5000
+  enable_progress_bar: true
