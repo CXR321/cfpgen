@@ -127,7 +127,7 @@ The resulting FASTA files will be saved in: ```generation-results/dplm_650m/```.
 The fully featured version of _CFP-Gen_ requires a multi-stage training process. Each stage typically requires at least 4 A100 GPUs.
 Below, we outline key steps for each stage. Users do not need to complete the entire pipeline, and each stage can be trained independently based on the specific functionalities.
 
-### To support GO/IPR/EC annotations
+### To Support GO/IPR/EC Annotations
 
 Users can first check the parameters in ```configs/experiment/cfpgen/cfpgen_650m_stage1.yaml```, and then run:
 
@@ -150,7 +150,7 @@ Once training is finished, users will find the logs and checkpoints in
 ```byprot-checkpoints/${model_name}```.
 These checkpoint files can be used for direct evaluation or for second-stage training.
 
-### To support functional motifs
+### To Support Functional Motifs
 
 This stage is used to further train the Residue-Controlled Functional Encoding (RCFE) module in a sequence-level controller style.
 Users should first obtain the pretrained model from the previous stage by running:
@@ -179,7 +179,7 @@ python train.py \
 These checkpoint files can be found in ```byprot-checkpoints/${model_name}``` for evaluation.
 
 
-### To support functional inverse folding
+### To Support Functional Inverse Folding
 
 **Pretraining of the structure adapter on CATH**
 
@@ -237,7 +237,7 @@ The evaluation metrics are provided across three levels:
 - Function level (e.g., evaluated by function predictors)
 - Structural level (e.g., for inverse folding tasks)
 
-### Distribution evaluation
+### Distribution Evaluation
 The following command computes Maximum Mean Discrepancy (MMD) and Mean Reciprocal Rank (MRR) between the generated and real sequences:
 ```bash
 python eval_mmd.py <go/ipr/ec> <fasta_filename> <gt_data>
@@ -245,7 +245,7 @@ python eval_mmd.py <go/ipr/ec> <fasta_filename> <gt_data>
 Here, ```<fasta_filename>```is the output FASTA file obtained by the previous generation commands. ```<gt_data>``` refers to the ground-truth data file (e.g., ```data-bin/uniprotKB/cfpgen_general_dataset/test.pkl```)
 
 
-### GO function evaluation
+### GO Function Evaluation
 Users should first set up the environment following the instructions from [DeepGO](https://github.com/bio-ontology-research-group/deepgo2), and then run:
 ```bash
 python predict.py -if <fasta_filename>
@@ -257,7 +257,7 @@ python eval_go.py \
     -tp `<fasta_name>_mf.tsv
 ```
 
-### IPR function evaluation
+### IPR Function Evaluation
 We apply [InterProScan](https://interproscan-docs.readthedocs.io/en/v5/) to get the IPR domain annotations:
 ```bash
 python eval_ipr.py <fasta_filename> <gt_data>
@@ -267,7 +267,7 @@ Please note that running InterProScan in high-throughput mode can be extremely t
 We recommend executing each step in ```eval_ipr.py``` carefully to ensure that the intermediate outputs are correct before proceeding to the next step.
 
 
-### EC function evaluation
+### EC Function Evaluation
 Users need to set up the environment following [CLEAN](https://github.com/tttianhao/CLEAN), and then run:
 ```bash
 python CLEAN_infer_fasta.py --fasta_data <fasta_filename> 
@@ -277,7 +277,7 @@ This will output the predicted EC annotations at: ```<fasta_name>_maxsep.csv```.
 python eval_ec.py <fasta_name>_maxsep.csv <gt_data>
 ```
 
-### Inverse folind evaluation
+### Inverse Folind Evaluation
 Once users obtain the designed sequences (either from the zero-shot model or the SFT model),
 they can run the following script to evaluate structure self-consistency, including pLDDT and scTM scores between the designed protein and the corresponding real structure:
 ```bash
