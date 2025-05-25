@@ -84,9 +84,12 @@ More advanced functionalities will be released in future updates.
   from transformers import AutoModel
   
   model = AutoModel.from_pretrained("airkingbd/dplm_650m")
+
+  original_state_dict = model.state_dict()
+  prefixed_state_dict = {f'esm.{k}': v for k, v in original_state_dict.items()}
   
   torch.save({
-      'state_dict': model.state_dict(),
+      'state_dict': prefixed_state_dict,
       'pytorch-lightning_version': pl.__version__  
   }, 'dplm_650m.ckpt')
   ```
