@@ -68,7 +68,7 @@ More advanced functionalities will be released in future updates.
 
 | Model name                                                            | Functionalities       |   
 |-----------------------------------------------------------------------|-----------------------|
-| [dplm-650m](https://huggingface.co/airkingbd/dplm_650m/tree/main)    | For Pretraining       |
+| [dplm-650m](https://drive.google.com/file/d/16_spXxWXAs6E4SWXlCgRqxy6Z7gVZYFV/view?usp=sharing)    | For Pretraining       |
 | [cfpgen-stage1](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing) | GO & IPR              |
 | [cfpgen-if-zs](https://drive.google.com/file/d/1CgZWZvmhS39wMFx3EhduOk3C39cjIxXd/view?usp=sharing)  | GO & IPR & BB.        |
 | [cfpgen-stage2](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing)   | GO & IPR & Seq. Motif |
@@ -76,24 +76,8 @@ More advanced functionalities will be released in future updates.
 
 ### Notes:
 
-- ```dplm-650m```: This is the base pretrained model from DPLM. It is intended for users who wish to retrain CFP-Gen on their own datasets to support customized functional constraints.
-  Please use the following script to convert the ```.bin``` model into a ```.ckpt``` file compatible with PyTorch Lightning. The ```.ckpt``` file is required to be placed under ```cfpgen/pretrained/```
-  ```
-  import torch
-  import pytorch_lightning as pl
-  from transformers import AutoModel
+- ```dplm-650m```: This is the base pretrained model from DPLM, required to be placed under ```cfpgen/pretrained/```. It is intended for users who wish to retrain CFP-Gen on their own datasets to support customized functional constraints.
   
-  model = AutoModel.from_pretrained("airkingbd/dplm_650m")
-
-  original_state_dict = model.state_dict()
-  prefixed_state_dict = {f'esm.{k}': v for k, v in original_state_dict.items()}
-  
-  torch.save({
-      'state_dict': prefixed_state_dict,
-      'pytorch-lightning_version': pl.__version__  
-  }, 'dplm_650m.ckpt')
-  ```
-
 - ```cfpgen-stage1```: Supports conditioning on GO terms and IPR domains defined by our **general protein dataset**. It is suitable for protein generation tasks with annotation-level guidance.
 
 - ```cfpgen-stage2```: Extends stage1 by additionally supporting sequence motif input (e.g., 20-30 residue fragments). When combined with GO and IPR annotations, it achieves higher function scores.
