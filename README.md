@@ -77,7 +77,7 @@ More advanced functionalities will be released in future updates.
 ### Notes:
 
 - ```dplm-650m```: This is the base pretrained model from DPLM. It is intended for users who wish to retrain CFP-Gen on their own datasets to support customized functional constraints.
-  Please use the following script to convert the```.bin``` model into a```.ckpt```file compatible with PyTorch Lightning. The```.ckpt``` file is required to be placed under ```cfpgen/pretrained/```
+  Please use the following script to convert the ```.bin``` model into a ```.ckpt``` file compatible with PyTorch Lightning. The ```.ckpt``` file is required to be placed under ```cfpgen/pretrained/```
   ```
   import torch
   import pytorch_lightning as pl
