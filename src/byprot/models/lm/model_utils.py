@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-from byprot.models.lm.esm_dplm_v1 import EsmForDPLM
+from byprot.models.lm.esm_dplm import EsmForDPLM
 from byprot.models.lm.esm_cfpgen import EsmForCFPGEN
 from byprot.models.lm.esm_cfpgen_if import EsmForCFPGenInverseFolding
 from dataclasses import dataclass, field

@@ -454,7 +454,7 @@ class ModifiedEsmModel(EsmModel):
             in_features=config.num_hidden_layers * config.num_attention_heads, bias=True
         )
 
-        self.hidden_size = 1280
+        self.hidden_size = config.hidden_size
 
         # Initialize weights and apply final processing
         self.post_init()
