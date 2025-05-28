@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 <!-- <div align="center"> -->
 <!-- omit in toc -->
 # _CFP-Gen_: Combinatorial Functional Protein Generation via Diffusion Language Models
@@ -67,29 +66,29 @@ Users may also customize their own datasets for training or fine-tuning by using
 We provide several pretrained checkpoints with basic functional capabilities.
 More advanced functionalities will be released in future updates.
 
-| Model name                                                            | Functionalities       |   
-|-----------------------------------------------------------------------|-----------------------|
-| [dplm-650m](https://drive.google.com/file/d/16_spXxWXAs6E4SWXlCgRqxy6Z7gVZYFV/view?usp=sharing)    | For Pretraining       |
-| [cfpgen-stage1](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing) | GO & IPR              |
-| [cfpgen-if-zs](https://drive.google.com/file/d/1CgZWZvmhS39wMFx3EhduOk3C39cjIxXd/view?usp=sharing)  | GO & IPR & BB.        |
-| [cfpgen-stage2](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing)   | GO & IPR & Seq. Motif |
+| Model name                                                                                         | Functionalities       |   
+|----------------------------------------------------------------------------------------------------|-----------------------|
+| [cfpgen-650m](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing)  | GO & IPR & Seq. Motif |
+| [cfpgen-if-zs](https://drive.google.com/file/d/1CgZWZvmhS39wMFx3EhduOk3C39cjIxXd/view?usp=sharing) | GO & IPR & Backbone   |
+| [dplm-650m](https://drive.google.com/file/d/16_spXxWXAs6E4SWXlCgRqxy6Z7gVZYFV/view?usp=sharing)    | For training CFP-Gen  |
+
 
 
 ### Notes:
 
-- ```dplm-650m```: This is the base pretrained model from DPLM, required to be placed under ```cfpgen/pretrained/```. It is intended for users who wish to retrain CFP-Gen on their own datasets to support customized functional constraints.
   
-- ```cfpgen-stage1```: Supports conditioning on GO terms and IPR domains defined by our **general protein dataset**. It is suitable for protein generation tasks with annotation-level guidance.
 
-- ```cfpgen-stage2```: Extends stage1 by additionally supporting sequence motif input (e.g., 20-30 residue fragments). When combined with GO and IPR annotations, it achieves higher function scores.
+- ```cfpgen-650m```: Support conditioning on GO terms, IPR domains and sequence motifs (e.g., 10-30 residue fragments) defined by our **general protein dataset**. This model can be readily used for _Functional Protein Generation_.
 
-- ```cfpgen-if-zs```: Designed for _functional inverse folding_ in **zero-shot** settings. The structure adapter used in this model is pretrained on CATH-4.3. It enables the generation of functional sequences conditioned on backbone atomic coordinates, while simultaneously leveraging GO and IPR annotations.
+- ```cfpgen-if-zs```: Designed for _Functional Inverse Folding_ in **zero-shot** settings. The structure adapter used in this model is pretrained on CATH-4.3. It enables the generation of functional sequences conditioned on backbone atomic coordinates, while simultaneously leveraging GO and IPR annotations.
+
+- ```dplm-650m```: This is the base pretrained model from DPLM, required to be placed under ```cfpgen/pretrained/```. It is intended for users who wish to retrain CFP-Gen on their own datasets to support customized functional constraints.
 
 
 ## Generation with _CFP-Gen_
 ### Functional Protein Generation
 
-Users could modify necessary parameters (e.g.,```ckpt_path```and```saveto```) in
+Users could modify necessary parameters (e.g.,```ckpt_path=<path_to_cfpgen-650m>```) in the config file:
 ```bash
 configs/test_cfpgen.yaml
 ```
@@ -307,8 +306,4 @@ Our project is partially supported by the following open-source codebases. We si
   booktitle={International Conference on Machine Learning},
   year={2025}
 }
-
 ```
-=======
-# cfpgen
->>>>>>> Initial commit
