@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <!-- <div align="center"> -->
 <!-- omit in toc -->
 # _CFP-Gen_: Combinatorial Functional Protein Generation via Diffusion Language Models
@@ -308,3 +309,6 @@ Our project is partially supported by the following open-source codebases. We si
 }
 
 ```
+=======
+# cfpgen
+>>>>>>> Initial commit
