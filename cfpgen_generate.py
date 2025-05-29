@@ -82,7 +82,7 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
 def get_initial(config, model, sample, length, tokenizer, device, sequence):
 
     go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
-    ipr_label = sample['ipr_mapped']
+    ipr_labels = sample['ipr_mapped']
     ec_labels = sample.get('EC_mapped', None)
 
     if config.get('use_seq_motif', False):
@@ -119,8 +119,8 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
     if config.get('use_go', False) and len(go_labels):
         out_batch['go_label'] = torch.tensor(go_labels)
 
-    if config.get('use_ipr', False) and len(ipr_label):
-        out_batch['ipr_label'] = torch.tensor(ipr_label)
+    if config.get('use_ipr', False) and len(ipr_labels):
+        out_batch['ipr_label'] = torch.tensor(ipr_labels)
 
     if config.get('use_ec', False) and len(ec_labels):
         out_batch['ec_label'] = torch.tensor(ec_labels)
