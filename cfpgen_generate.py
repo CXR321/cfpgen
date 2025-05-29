@@ -25,26 +25,12 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_mask_ratio=0.1):
-    """
-    在整个序列中，根据 motif_start_end 指定的位置进行保留，
-    若 motif_start_end 为空，则在整个有效序列范围内随机选择 5%~10% 的片段进行保留，其他位置填充 mask_id。
-
-    参数：
-    - target (torch.Tensor): 目标序列张量，形状为 (batch_size, sequence_length)。
-    - motif_start_end (torch.Tensor): 形状为 (batch_size, 2)，每个条目包含起始和终止位点。
-    - min_mask_ratio (float): 需要保留的最小比例，相对于序列总长度。
-    - max_mask_ratio (float): 需要保留的最大比例，相对于序列总长度。
-
-    返回：
-    - masked_target (torch.Tensor): 经过 mask 处理的张量，形状与 target 相同。
-    """
     batch_size, sequence_length = target.shape
     masked_targets = []
 
     for i in range(batch_size):
         current_target = target[i].clone()
 
-        # 获取非特殊符号的位置掩码（有效序列）
         non_special_sym_mask = (
                 (current_target != model.pad_id) &
                 (current_target != model.bos_id) &
@@ -53,7 +39,6 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
         effective_indices = torch.where(non_special_sym_mask)[0]
 
         if len(effective_indices) == 0:
-            # 如果全是特殊符号，直接填充 mask_id
             masked_targets.append(torch.full_like(current_target, fill_value=model.mask_id))
             continue
 
@@ -61,37 +46,29 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
         retain_min_len = max(10, int(min_mask_ratio * total_length))
         retain_max_len = max(30, int(max_mask_ratio * total_length))
 
-        # **Step 1: 处理 motif_start_end**
         start, end = motif_start_end[i]
 
         if start == 0 and end == 0:
-            # **motif_start_end 为空，在有效区域内随机选择 5%~10% 长度的片段**
             retain_length = torch.randint(retain_min_len, retain_max_len + 1, (1,)).item()
             retain_start_idx = torch.randint(0, total_length - retain_length + 1, (1,)).item()
             retain_start = effective_indices[retain_start_idx].item()
             retain_end = effective_indices[retain_start_idx + retain_length - 1].item()
         else:
-            # **motif_start_end 存在，调整其长度**
             motif_length = end - start
             if motif_length < retain_min_len:
-                # **如果 motif 太短，则扩展到 `5%` 长度**
                 retain_length = retain_min_len
             elif motif_length > retain_max_len:
-                # **如果 motif 太长，则缩短到 `10%` 长度**
                 retain_length = retain_max_len
             else:
-                # **长度合理，使用 motif_length**
                 retain_length = motif_length
 
-            # **在 `start` 到 `end - retain_length` 之间随机选取 `retain_start`**
             if end - start - retain_length > 0:
                 retain_start = torch.randint(start, end - retain_length + 1, (1,)).item()
             else:
-                retain_start = start  # 仅在长度足够时随机，否则从 start 开始
+                retain_start = start
 
             retain_end = retain_start + retain_length - 1
 
-        # **Step 2: 生成最终掩码**
         sequence_indices = torch.arange(sequence_length, device=target.device)
         mask = non_special_sym_mask & ((sequence_indices < retain_start) | (sequence_indices > retain_end))
         masked_target = current_target.clone()
@@ -101,73 +78,6 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
 
     return torch.stack(masked_targets)
 
-def get_motif_middle_len(target, model, motif_start_end, motif_len_min=10, motif_len_max=30, seq_len=200):
-
-    batch_size = target.shape[0]
-    masked_targets = []
-
-    for i in range(batch_size):
-        current_target = target[i].clone()
-        if sum(motif_start_end[i]) == 0:
-            # 如果 motif_start_end 为空，从有效位置中随机选择起止位点
-            non_special_sym_mask = (
-                    (current_target != model.pad_id) &
-                    (current_target != model.bos_id) &
-                    (current_target != model.eos_id)
-            )
-            effective_indices = torch.where(non_special_sym_mask)[0]
-            if len(effective_indices) == 0:
-                masked_targets.append(torch.full_like(current_target, fill_value=model.mask_id))
-                continue
-
-            start = effective_indices[0].item()
-            end = effective_indices[-1].item()
-        else:
-            start, end = motif_start_end[i]
-
-        motif_length = end - start
-
-        # 如果 motif 长度小于最小长度，则使用 motif 的原始长度
-        if motif_length < motif_len_min:
-            crop_len = motif_length
-        else:
-            crop_len = min(torch.randint(motif_len_min, min(motif_len_max, motif_length) + 1, (1,)).item(), motif_length)
-
-        # 获取非特殊符号的位置掩码
-        non_special_sym_mask = (
-                (current_target != model.pad_id) &
-                (current_target != model.bos_id) &
-                (current_target != model.eos_id)
-        )
-
-        # 确定 motif 应该放置的位置，使其尽量位于序列中间，并考虑 seq_len 的限制
-        effective_indices = torch.where(non_special_sym_mask)[0]
-        if len(effective_indices) == 0:
-            masked_targets.append(torch.full((seq_len,), fill_value=model.mask_id, dtype=current_target.dtype))
-            continue
-
-        middle_position = (effective_indices[0] + effective_indices[-1]) // 2
-        crop_start = max(middle_position - crop_len // 2, effective_indices[0])
-        crop_end = min(crop_start + crop_len, effective_indices[-1] + 1)
-        crop_start = crop_end - crop_len  # 确保 motif 长度正确
-
-        # 创建一个新的序列，并将其初始化
-        new_target = torch.full((seq_len+2,), fill_value=model.mask_id, dtype=current_target.dtype)
-        new_target[0] = model.bos_id
-        new_target[-1] = model.eos_id
-
-        # 将 current_target[crop_start:crop_end] 部分复制到新序列的中间位置
-        insert_start = (seq_len+2 - crop_len) // 2
-        insert_end = insert_start + crop_len
-        new_target[insert_start:insert_end] = current_target[crop_start:crop_end]
-
-
-        masked_targets.append(new_target)
-
-    # 将所有处理后的序列拼接成一个张量
-    masked_target = torch.stack(masked_targets)
-
-    return masked_target
 
 def get_initial(config, model, sample, length, tokenizer, device, sequence):
 
@@ -181,9 +91,7 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
             motif_start_end = [[motif['start'], motif['end']] for motif in motif_info][0]
         else:
             motif_start_end = [0, 0]
-        shift = random.randint(-30, 30)
-        length = len(sequence) + shift
-        # length = len(sequence)
+        length = len(sequence)
 
     seq = ['<mask>'] * length
 
@@ -208,13 +116,13 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
     }
 
     # Annotation tags
-    if config.get('use_go', False) and go_labels is not None:
+    if config.get('use_go', False) and len(go_labels):
         out_batch['go_label'] = torch.tensor(go_labels)
 
-    if config.get('use_ipr', False) and ipr_label is not None:
+    if config.get('use_ipr', False) and len(ipr_label):
         out_batch['ipr_label'] = torch.tensor(ipr_label)
 
-    if config.get('use_ec', False) and ec_labels is not None:
+    if config.get('use_ec', False) and len(ec_labels):
         out_batch['ec_label'] = torch.tensor(ec_labels)
 
     if config.get('use_seq_motif', False):
