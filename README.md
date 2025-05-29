@@ -68,14 +68,13 @@ More advanced functionalities will be released in future updates.
 
 | Model name                                                                                         | Functionalities       |   
 |----------------------------------------------------------------------------------------------------|-----------------------|
-| [cfpgen-650m](https://drive.google.com/file/d/1UdSG2nBXodvihVkmYbb0Szh3YT_Mlxfc/view?usp=sharing)  | GO & IPR & Seq. Motif |
-| [cfpgen-if-zs](https://drive.google.com/file/d/1CgZWZvmhS39wMFx3EhduOk3C39cjIxXd/view?usp=sharing) | GO & IPR & Backbone   |
+| [cfpgen-650m](https://drive.google.com/file/d/1XVYYvKjgcM08v6uI6PYb0-yMzAOxJXis/view?usp=sharing)  | GO & IPR & Seq. Motif |
+| [cfpgen-if-zs](https://drive.google.com/file/d/1YwD7xpQTA0ktUdQbgHVb15IKwjEYs2ef/view?usp=sharing) | GO & IPR & Backbone   |
 | [dplm-650m](https://drive.google.com/file/d/16_spXxWXAs6E4SWXlCgRqxy6Z7gVZYFV/view?usp=sharing)    | For training CFP-Gen  |
 
 
 
 ### Notes:
-
   
 
 - ```cfpgen-650m```: Support conditioning on GO terms, IPR domains and sequence motifs (e.g., 10-30 residue fragments) defined by our **general protein dataset**. This model can be readily used for _Functional Protein Generation_.
@@ -246,7 +245,7 @@ Here, ```<fasta_filename>```is the output FASTA file obtained by the previous ge
 
 
 ### GO Function Evaluation
-Users should first set up the environment following the instructions from [DeepGO](https://github.com/bio-ontology-research-group/deepgo2), and then run:
+Users should first set up the environment and prepare the GO database ([data.tar.gz](https://deepgo.cbrc.kaust.edu.sa/data/deepgo2/data.tar.gz)) following the instructions from [DeepGO](https://github.com/bio-ontology-research-group/deepgo2), and then run:
 ```bash
 python predict.py -if <fasta_filename>
 ```
