@@ -50,7 +50,7 @@ bash scripts/install.sh
 
 
 ## Datasets
-**General Protein Dataset**: The processed dataset ```cfpgen_general_dataset``` can be downloaded from [Google Cloud](https://drive.google.com/file/d/1bRtil483NBOuazPSVO7gCpM-K7rNj1Z9/view?usp=sharing) and placed in the directory: ```data-bin/uniprotKB/cfpgen_general_dataset```. It contains 103,939 proteins annotated with 375 GO terms and 1,154 IPR domains.
+**General Protein Dataset**: The processed dataset ```cfpgen_general_dataset``` can be downloaded from [Google Drive](https://drive.google.com/file/d/1bRtil483NBOuazPSVO7gCpM-K7rNj1Z9/view?usp=sharing) and placed in the directory: ```data-bin/uniprotKB/cfpgen_general_dataset```. It contains 103,939 proteins annotated with 375 GO terms and 1,154 IPR domains.
 
 Files with the suffix ```*_bb.pkl``` additionally include backbone coordinate information. 
 The corresponding preprocessed structure files ```uniprot_bb_coords``` can be [downloaded here](https://drive.google.com/file/d/1VXkSd044aJFn-p1dCskMxGjBlLH5mOx7/view?usp=sharing) and placed in: ```data-bin/uniprotKB/uniprot_bb_coords```.
