@@ -360,7 +360,7 @@ class CFPGenEncoder(EsmEncoder):
         '''
         Residue-Controlled Functional Encoding (RCFE)
         '''
-        if self.seq_controlnet and anno_tag['seq_cond']:
+        if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0:
 
             motif = anno_tag['seq_cond']
           
