@@ -141,64 +141,14 @@ class CondDiffusionProteinLanguageModel(nn.Module):
         else:
             return logits
 
-    # def compute_loss(self, batch, weighting='constant'):
-    #     target = batch['targets']
-    #
-    #     # couple
-    #     t1, t2 = torch.randint(
-    #         1, self.cfg.num_diffusion_timesteps + 1,
-    #         (2 * target.size(0), ),
-    #         device=target.device
-    #     ).chunk(2)
-    #
-    #     if self.cfg.rdm_couple:
-    #         x_t, t, loss_mask = list(
-    #             self.q_sample_coupled(
-    #                 target, t1, t2,
-    #                 maskable_mask=self.get_non_special_sym_mask(target)
-    #             ).values()
-    #         )
-    #         target = target.repeat(2, 1)
-    #     else:
-    #         x_t, t, loss_mask = list(
-    #             self.q_sample(
-    #                 target, t1,
-    #                 maskable_mask=self.get_non_special_sym_mask(target)
-    #             ).values()
-    #         )
-    #
-    #     logits = self.forward(x_t)
-    #
-    #     num_timesteps = self.cfg.num_diffusion_timesteps
-    #     weight = {
-    #         "linear": (num_timesteps - (t - 1)),    # num_timesteps * (1 - (t-1)/num_timesteps)
-    #         "constant": num_timesteps * torch.ones_like(t)
-    #     }[weighting][:, None].float() / num_timesteps
-    #
-    #     return logits, target, loss_mask, weight
-
 
     def get_motif_original(self, target, motif_start_end, motif_len_min, motif_len_max, min_mask_ratio=0.05, max_mask_ratio=0.1):
-        """
-        在整个序列中，根据 motif_start_end 指定的位置进行保留，
-        若 motif_start_end 为空，则在整个有效序列范围内随机选择 5%~10% 的片段进行保留，其他位置填充 mask_id。
-
-        参数：
-        - target (torch.Tensor): 目标序列张量，形状为 (batch_size, sequence_length)。
-        - motif_start_end (torch.Tensor): 形状为 (batch_size, 2)，每个条目包含起始和终止位点。
-        - min_mask_ratio (float): 需要保留的最小比例，相对于序列总长度。
-        - max_mask_ratio (float): 需要保留的最大比例，相对于序列总长度。
-
-        返回：
-        - masked_target (torch.Tensor): 经过 mask 处理的张量，形状与 target 相同。
-        """
         batch_size, sequence_length = target.shape
         masked_targets = []
 
         for i in range(batch_size):
             current_target = target[i].clone()
 
-            # 获取非特殊符号的位置掩码（有效序列）
             non_special_sym_mask = (
                     (current_target != self.pad_id) &
                     (current_target != self.bos_id) &
@@ -207,7 +157,6 @@ class CondDiffusionProteinLanguageModel(nn.Module):
             effective_indices = torch.where(non_special_sym_mask)[0]
 
             if len(effective_indices) == 0:
-                # 如果全是特殊符号，直接填充 mask_id
                 masked_targets.append(torch.full_like(current_target, fill_value=self.mask_id))
                 continue
 
@@ -215,37 +164,29 @@ class CondDiffusionProteinLanguageModel(nn.Module):
             retain_min_len = max(motif_len_min, int(min_mask_ratio * total_length))
             retain_max_len = max(motif_len_max, int(max_mask_ratio * total_length))
 
-            # **Step 1: 处理 motif_start_end**
             start, end = motif_start_end[i]
 
             if start == 0 and end == 0:
-                # **motif_start_end 为空，在有效区域内随机选择 5%~10% 长度的片段**
                 retain_length = torch.randint(retain_min_len, retain_max_len + 1, (1,)).item()
                 retain_start_idx = torch.randint(0, total_length - retain_length + 1, (1,)).item()
                 retain_start = effective_indices[retain_start_idx].item()
                 retain_end = effective_indices[retain_start_idx + retain_length - 1].item()
             else:
-                # **motif_start_end 存在，调整其长度**
                 motif_length = end - start
                 if motif_length < retain_min_len:
-                    # **如果 motif 太短，则扩展到 `5%` 长度**
                     retain_length = retain_min_len
                 elif motif_length > retain_max_len:
-                    # **如果 motif 太长，则缩短到 `10%` 长度**
                     retain_length = retain_max_len
                 else:
-                    # **长度合理，使用 motif_length**
                     retain_length = motif_length
 
-                # **在 `start` 到 `end - retain_length` 之间随机选取 `retain_start`**
                 if end - start - retain_length > 0:
                     retain_start = torch.randint(start, end - retain_length + 1, (1,)).item()
                 else:
-                    retain_start = start  # 仅在长度足够时随机，否则从 start 开始
+                    retain_start = start
 
                 retain_end = retain_start + retain_length - 1
 
-            # **Step 2: 生成最终掩码**
             sequence_indices = torch.arange(sequence_length, device=target.device)
             mask = non_special_sym_mask & ((sequence_indices < retain_start) | (sequence_indices > retain_end))
             masked_target = current_target.clone()
@@ -256,25 +197,13 @@ class CondDiffusionProteinLanguageModel(nn.Module):
         return torch.stack(masked_targets)
 
     def get_motif_middle(self, target, motif_start_end, motif_len_min=10, motif_len_max=30):
-        """
-        根据提供的起止位点对每个 target 序列进行裁剪，将 motif segment 尽量放在序列的中间位置，其他位置用 mask_id 填充。
 
-        参数：
-        - target (torch.Tensor): 要处理的目标张量，形状为 (batch_size, sequence_length)。
-        - motif_start_end (torch.Tensor): 形状为 (batch_size, 2)，每个条目包含起始和终止位点。
-        - motif_len_min (int): 最小的 motif 片段长度。
-        - motif_len_max (int): 最大的 motif 片段长度。
-
-        返回：
-        - masked_target (torch.Tensor): 经过裁剪和掩码处理的张量，形状与 target 相同。
-        """
         batch_size, sequence_length = target.shape
         masked_targets = []
 
         for i in range(batch_size):
             current_target = target[i].clone()
             if sum(motif_start_end[i]) == 0:
-                # 如果 motif_start_end 为空，从有效位置中随机选择起止位点
                 non_special_sym_mask = (
                         (current_target != self.pad_id) &
                         (current_target != self.bos_id) &
@@ -292,20 +221,17 @@ class CondDiffusionProteinLanguageModel(nn.Module):
 
             motif_length = end - start
 
-            # 如果 motif 长度小于最小长度，则使用 motif 的原始长度
             if motif_length < motif_len_min:
                 crop_len = motif_length
             else:
                 crop_len = min(torch.randint(motif_len_min, min(motif_len_max, motif_length) + 1, (1,)).item(), motif_length)
 
-            # 获取非特殊符号的位置掩码
             non_special_sym_mask = (
                     (current_target != self.pad_id) &
                     (current_target != self.bos_id) &
                     (current_target != self.eos_id)
             )
 
-            # 确定 motif 应该放置的位置，使其尽量位于序列中间
             effective_indices = torch.where(non_special_sym_mask)[0]
             if len(effective_indices) == 0:
                 masked_targets.append(torch.full_like(current_target, fill_value=self.mask_id))
@@ -314,16 +240,14 @@ class CondDiffusionProteinLanguageModel(nn.Module):
             middle_position = (effective_indices[0] + effective_indices[-1]) // 2
             crop_start = max(middle_position - crop_len // 2, effective_indices[0])
             crop_end = min(crop_start + crop_len, effective_indices[-1] + 1)
-            crop_start = crop_end - crop_len  # 确保 motif 长度正确
+            crop_start = crop_end - crop_len
 
-            # 创建当前序列的掩码副本，并填充为 mask_id
             masked_target = current_target.clone()
             masked_target[non_special_sym_mask] = self.mask_id
             masked_target[crop_start:crop_end] = current_target[crop_start:crop_end]
 
             masked_targets.append(masked_target)
 
-        # 将所有处理后的序列拼接成一个张量
         masked_target = torch.stack(masked_targets)
 
         return masked_target
@@ -355,11 +279,12 @@ class CondDiffusionProteinLanguageModel(nn.Module):
                 ).values()
             )
 
-        # todo: support more sampling methods
-        if random.random() < 0.5:
-            masked_target = self.get_motif_original(target, batch['motif_start_end'], motif_len_min=self.cfg.cond.motif_min_len, motif_len_max=self.cfg.cond.motif_max_len)
-        else:
-            masked_target = self.get_motif_middle(target, batch['motif_start_end'], motif_len_min=self.cfg.cond.motif_min_len, motif_len_max=self.cfg.cond.motif_max_len)
+        masked_target = None
+        if self.cfg.cond.use_seq_motif:
+            if random.random() < 0.5:
+                masked_target = self.get_motif_original(target, batch['motif_start_end'], motif_len_min=self.cfg.cond.motif_min_len, motif_len_max=self.cfg.cond.motif_max_len)
+            else:
+                masked_target = self.get_motif_middle(target, batch['motif_start_end'], motif_len_min=self.cfg.cond.motif_min_len, motif_len_max=self.cfg.cond.motif_max_len)
 
         inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'])
 
