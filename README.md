@@ -5,7 +5,7 @@
 <a href="https://pytorchlightning.ai/"><img alt="Lightning" src="https://img.shields.io/badge/-Lightning-792ee5?logo=pytorchlightning&logoColor=white"></a>
 <a href="https://hydra.cc/"><img alt="Config: Hydra" src="https://img.shields.io/badge/Config-Hydra-89b8cd"></a>
 <a href="https://github.com/ashleve/lightning-hydra-template"><img alt="Template" src="https://img.shields.io/badge/-Lightning--Hydra--Template-017F2F?style=flat&logo=github&labelColor=gray"></a><br>
-This repository provides the official PyTorch implementation of our ICML 2025 paper: [_CFP-Gen_: Combinatorial Functional Protein Generation via Diffusion Language Models]((https://arxiv.org/pdf/2505.22869)). CFP-Gen enables _de novo_ protein design by simultaneously conditioning on functional annotations, sequence motifs, and backbone structures.
+This repository provides the official PyTorch implementation of our ICML 2025 paper: [_CFP-Gen_: Combinatorial Functional Protein Generation via Diffusion Language Models](https://arxiv.org/pdf/2505.22869). CFP-Gen enables _de novo_ protein design by simultaneously conditioning on functional annotations, sequence motifs, and backbone structures.
 
 ## Abstract 
 
