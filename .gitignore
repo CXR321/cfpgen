@@ -157,9 +157,18 @@ run/logs
 # pdb
 *.pdb
 
+*.fasta
+*.out
+*.txt
+
+
 byprot-checkpoints/
 generation-results/
 data-bin/scaffolding-pdbs/
 temp.ipynb
 run/.DS_Store
 .DS_Store
+
+data-bin/
+checkpoints/
+pretrained/*

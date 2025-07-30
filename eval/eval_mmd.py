@@ -63,7 +63,7 @@ def expand_gt_for_generated(generated_data, gt_data):
             expanded_gt_labels.append({
                 'go': matching_gt['go_numbers']['F'],
                 'ipr': matching_gt['ipr_numbers'],
-                'ec': matching_gt['EC_number'],
+                # 'ec': matching_gt['EC_number'],
             })
             expanded_gt_ids.append(gen_id)
 
@@ -104,6 +104,8 @@ if __name__ == "__main__":
         labels=expanded_labels,
         terms=label_terms
     )
+
+    # print(new_gt_data['terms'])
 
     metrics = {
         'MRR': round(mrr(generated_list, new_gt_data['labels'], new_gt_data['sequence'], new_gt_data['labels'], terms=new_gt_data['terms']), 3),

@@ -4,21 +4,21 @@ import numpy as np
 
 amino_acid_alphabet = 'ARNDCEQGHILKMFPSTWYV'
 
-PATH = '/home/yinj0b/repository/proteogan/data/'
+PATH = '/AIRvePFS/dair/chenxr-data/repo/cfpgen/data/'
 
 # PATH = os.path.dirname(os.path.realpath(__file__))
 
-with open(PATH+'/labels.txt') as file:
-    labels = file.read().split()
+# with open(PATH+'/labels.txt') as file:
+#     labels = file.read().split()
 
 seq_tokens = list('-'+amino_acid_alphabet)
-label_tokens = labels+['<PAD>']
-all_tokens = np.array(seq_tokens + label_tokens)
+# label_tokens = labels+['<PAD>']
+# all_tokens = np.array(seq_tokens + label_tokens)
 
 aa_map = {k:v for v,k in enumerate(seq_tokens)}
 seq_token_map = {v:k for k,v in aa_map.items()}
-label_map = {k:v for v,k in enumerate(label_tokens)}
-label_map['<PAD>'] = 0
+# label_map = {k:v for v,k in enumerate(label_tokens)}
+# label_map['<PAD>'] = 0
 
 def csv_load(dataset=None, split=None, path=None):
     '''

@@ -1,0 +1,145 @@
+CONFIG
+├── datamodule
+│   └── _target_: uniprotKB                                                                                                                                                                        
+│       data_dir: /AIRvePFS/dair/chenxr-data/repo/cfpgen/data-bin/uniprotKB/cfpgen_general_dataset                                                                                                 
+│       max_tokens: 8192                                                                                                                                                                           
+│       max_len: 1022                                                                                                                                                                              
+│       sort: false                                                                                                                                                                                
+│       num_workers: 8                                                                                                                                                                             
+│       pin_memory: true                                                                                                                                                                           
+│       mini_run: false                                                                                                                                                                            
+│                                                                                                                                                                                                  
+├── task
+│   └── _target_: lm/cfp_gen                                                                                                                                                                       
+│       learning:                                                                                                                                                                                  
+│         noise: random_mask                                                                                                                                                                       
+│         watch_t1_t2_loss: false                                                                                                                                                                  
+│         cal_constant_loss: false                                                                                                                                                                 
+│         weight: linear                                                                                                                                                                           
+│       criterion:                                                                                                                                                                                 
+│         _target_: byprot.modules.cross_entropy.RDMCrossEntropyLoss                                                                                                                               
+│         label_smoothing: 0.0                                                                                                                                                                     
+│         ignore_index: 1                                                                                                                                                                          
+│       optimizer:                                                                                                                                                                                 
+│         type: adamw                                                                                                                                                                              
+│         _partial_: true                                                                                                                                                                          
+│         lr: 4.0e-05                                                                                                                                                                              
+│         pretrained_model_name_or_path: /AIRvePFS/dair/chenxr-data/repo/cfpgen/pretrained/dplm_650m.ckpt                                                                                          
+│         pretrained_lr_ratio: 0.0                                                                                                                                                                 
+│         betas:                                                                                                                                                                                   
+│         - 0.9                                                                                                                                                                                    
+│         - 0.98                                                                                                                                                                                   
+│         weight_decay: 0.01                                                                                                                                                                       
+│       lr_scheduler:                                                                                                                                                                              
+│         type: polynomial                                                                                                                                                                         
+│         warmup_steps: 2000                                                                                                                                                                       
+│         total_steps: 200000                                                                                                                                                                      
+│         lr: 4.0e-05                                                                                                                                                                              
+│         lr_end: 1.0e-05                                                                                                                                                                          
+│         warmup_init_lr: 1.0e-07                                                                                                                                                                  
+│         power: 1                                                                                                                                                                                 
+│                                                                                                                                                                                                  
+├── model
+│   └── _target_: cfp_gen                                                                                                                                                                          
+│       num_diffusion_timesteps: 500                                                                                                                                                               
+│       gradient_ckpt: false                                                                                                                                                                       
+│       rdm_couple: false                                                                                                                                                                          
+│       cond:                                                                                                                                                                                      
+│         use_go: true                                                                                                                                                                             
+│         go_num: 375                                                                                                                                                                              
+│         go_drop: 0.5                                                                                                                                                                             
+│         use_ipr: true                                                                                                                                                                            
+│         ipr_num: 1154                                                                                                                                                                            
+│         ipr_drop: 0.5                                                                                                                                                                            
+│         use_ec: false                                                                                                                                                                            
+│         ec_num: 661                                                                                                                                                                              
+│         ec_drop: 0                                                                                                                                                                               
+│         use_seq_motif: false                                                                                                                                                                     
+│         motif_min_len: 10                                                                                                                                                                        
+│         motif_max_len: 30                                                                                                                                                                        
+│       lora:                                                                                                                                                                                      
+│         lora: false                                                                                                                                                                              
+│         lora_rank: 16                                                                                                                                                                            
+│         lora_dropout: 0.1                                                                                                                                                                        
+│         lora_target_module: (esm.encoder.layer.[0-9]*.attention.(self.query|self.key|self.value|output.dense).*|esm.encoder.layer.[0-9]*.(intermediate|output).dense.*)                          
+│         modules_to_save: lm_head,esm.embeddings                                                                                                                                                  
+│       net:                                                                                                                                                                                       
+│         arch_type: func_esm                                                                                                                                                                      
+│         name: facebook/esm2_t33_650M_UR50D                                                                                                                                                       
+│         dropout: 0.1                                                                                                                                                                             
+│         pretrain: true                                                                                                                                                                           
+│         pretrained_model_name_or_path: /AIRvePFS/dair/chenxr-data/repo/cfpgen/pretrained/dplm_650m.ckpt                                                                                          
+│                                                                                                                                                                                                  
+├── callbacks
+│   └── model_summary:                                                                                                                                                                             
+│         _target_: pytorch_lightning.callbacks.RichModelSummary                                                                                                                                   
+│         max_depth: 2                                                                                                                                                                             
+│       model_checkpoint:                                                                                                                                                                          
+│         _target_: byprot.utils.callbacks.ModelCheckpoint                                                                                                                                         
+│         monitor: val/loss                                                                                                                                                                        
+│         mode: min                                                                                                                                                                                
+│         save_top_k: 3                                                                                                                                                                            
+│         save_last: true                                                                                                                                                                          
+│         verbose: true                                                                                                                                                                            
+│         dirpath: /AIRvePFS/dair/chenxr-data/repo/cfpgen/byprot-checkpoints/cfpgen_general_dataset_stage1/checkpoints                                                                             
+│         filename: step_{global_step}-loss_{val/loss:.2f}                                                                                                                                         
+│         auto_insert_metric_name: false                                                                                                                                                           
+│         every_n_train_steps: 10000                                                                                                                                                               
+│         every_n_epochs: null                                                                                                                                                                     
+│       early_stopping:                                                                                                                                                                            
+│         _target_: pytorch_lightning.callbacks.EarlyStopping                                                                                                                                      
+│         monitor: val/loss                                                                                                                                                                        
+│         mode: min                                                                                                                                                                                
+│         patience: 1000                                                                                                                                                                           
+│         min_delta: 0                                                                                                                                                                             
+│         check_on_train_epoch_end: false                                                                                                                                                          
+│                                                                                                                                                                                                  
+├── trainer
+│   └── _target_: pytorch_lightning.Trainer                                                                                                                                                        
+│       accelerator: cuda                                                                                                                                                                          
+│       devices: auto                                                                                                                                                                              
+│       min_epochs: 10                                                                                                                                                                             
+│       max_epochs: 10000                                                                                                                                                                          
+│       enable_progress_bar: true                                                                                                                                                                  
+│       log_every_n_steps: 10                                                                                                                                                                      
+│       val_check_interval: 1000                                                                                                                                                                   
+│       check_val_every_n_epoch: null                                                                                                                                                              
+│       strategy: ddp_find_unused_parameters_true                                                                                                                                                  
+│       precision: 16                                                                                                                                                                              
+│       gradient_clip_val: 0.0                                                                                                                                                                     
+│       num_sanity_val_steps: 0                                                                                                                                                                    
+│       reload_dataloaders_every_n_epochs: 1                                                                                                                                                       
+│       use_distributed_sampler: false                                                                                                                                                             
+│       max_steps: 200000                                                                                                                                                                          
+│       accumulate_grad_batches: 32                                                                                                                                                                
+│       num_nodes: 1                                                                                                                                                                               
+│                                                                                                                                                                                                  
+├── name
+│   └── cfpgen_general_dataset_stage1                                                                                                                                                              
+├── train
+│   └── train: true                                                                                                                                                                                
+│       test: true                                                                                                                                                                                 
+│       debug: false                                                                                                                                                                               
+│       force_restart: false                                                                                                                                                                       
+│       ckpt_path: last.ckpt                                                                                                                                                                       
+│       seed: 42                                                                                                                                                                                   
+│       lr: 4.0e-05                                                                                                                                                                                
+│       monitor: val/loss                                                                                                                                                                          
+│       mode: min                                                                                                                                                                                  
+│       patience: 1000                                                                                                                                                                             
+│       val_and_save_every_n_steps: null                                                                                                                                                           
+│                                                                                                                                                                                                  
+├── print_config
+│   └── True                                                                                                                                                                                       
+├── ignore_warnings
+│   └── True                                                                                                                                                                                       
+├── seed
+│   └── 42                                                                                                                                                                                         
+├── paths
+│   └── root_dir: /AIRvePFS/dair/chenxr-data/repo/cfpgen                                                                                                                                           
+│       data_dir: /AIRvePFS/dair/chenxr-data/repo/cfpgen/data-bin                                                                                                                                  
+│       log_dir: /AIRvePFS/dair/chenxr-data/repo/cfpgen/byprot-checkpoints/cfpgen_general_dataset_stage1                                                                                           
+│       ckpt_dir: /AIRvePFS/dair/chenxr-data/repo/cfpgen/byprot-checkpoints/cfpgen_general_dataset_stage1/checkpoints                                                                              
+│                                                                                                                                                                                                  
+└── project
+    └── CFPGen_650m

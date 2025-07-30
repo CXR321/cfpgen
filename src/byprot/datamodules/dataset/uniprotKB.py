@@ -178,6 +178,9 @@ class UniProtKBDataset(Dataset):
         self.metadata_lens = [len(ele['sequence']) for ele in self.indices]
         self.max_len = self.data_dir.max_len
 
+        # print("data index 0: ", self.indices[0])
+        # exit()
+
     def __len__(self):
         return len(self.indices)
 

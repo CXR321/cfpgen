@@ -2,13 +2,13 @@ import os
 import numpy as np
 from .similarity import mmd
 from .spectrum import spectrum_map
-from .util import labels as terms, GoDag
+from .util import GoDag
 import torch
 import pickle
 
 PATH = os.path.dirname(os.path.realpath(__file__))
 
-def mrr(seq1=None, labels1=None, seq2=None, labels2=None, emb1=None, emb2=None, n=1300, embedding='spectrum', ignore_parents=False, ignore_childs=False, godag=PATH+'/../data/godag.obo', return_ranks=False, terms=terms, warning=False, **kwargs):
+def mrr(seq1=None, labels1=None, seq2=None, labels2=None, emb1=None, emb2=None, n=1300, embedding='spectrum', ignore_parents=False, ignore_childs=False, godag=PATH+'/../data/godag.obo', return_ranks=False, terms=None, warning=False, **kwargs):
     '''
     Calculates MRR between two sets of sequences and associated labels. <seq2> and <labels2> is the reference set. Optionally takes embeddings of sequences if these have been precomputed for efficiency. <n> is the size of each label bucket. <ignore_parents> and <ignore_childs> are flags to ignore off-target effects in related terms in the label hierarchy.
     '''

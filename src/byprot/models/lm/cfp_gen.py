@@ -43,6 +43,7 @@ class CondDiffusionProteinLanguageModel(nn.Module):
         super().__init__()
         self._update_cfg(cfg)
         
+        # Note：嵌入很深，触及到esm.encode层的注意力机制，小心改
         self.net = get_net(cfg) if net is None else net
         self.tokenizer = self.net.tokenizer
 

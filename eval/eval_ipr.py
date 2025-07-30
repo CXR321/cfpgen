@@ -18,6 +18,7 @@ from sklearn.metrics import (
 from sklearn.preprocessing import MultiLabelBinarizer
 import pickle
 import re
+import multiprocessing
 
 
 def load_pkl_file(file_path):
@@ -46,13 +47,13 @@ def run_interproscan(fasta_file, output_file):
     返回 IPR domains 和 GO numbers 两个列表。
     """
     # 指定 InterProScan 的工作目录
-    interproscan_dir = "/home/yinj0b/repository/my_interproscan/interproscan-5.69-101.0"
+    interproscan_dir = "/AIRvePFS/dair/chenxr-data/repo/PDFBench/interproscan/interproscan-5.75-106.0"
 
     # 设置 Java 环境变量
-    os.environ["JAVA_HOME"] = "/home/yinj0b/thirdparty/java-11/jdk-11.0.24+8"
-    os.environ["JRE_HOME"] = os.environ["JAVA_HOME"] + "/jre"
-    os.environ["CLASSPATH"] = ".:" + os.environ["JAVA_HOME"] + "/lib:" + os.environ["JRE_HOME"] + "/lib"
-    os.environ["PATH"] = os.environ["JAVA_HOME"] + "/bin:" + os.environ["PATH"]
+    # os.environ["JAVA_HOME"] = "/home/yinj0b/thirdparty/java-11/jdk-11.0.24+8"
+    # os.environ["JRE_HOME"] = os.environ["JAVA_HOME"] + "/jre"
+    # os.environ["CLASSPATH"] = ".:" + os.environ["JAVA_HOME"] + "/lib:" + os.environ["JRE_HOME"] + "/lib"
+    # os.environ["PATH"] = os.environ["JAVA_HOME"] + "/bin:" + os.environ["PATH"]
 
     # 构造 InterProScan 命令
     command = [
@@ -97,37 +98,91 @@ def save_single_fasta(entry, output_path):
     with open(output_path, 'w') as f:
         f.write(f"{entry['header']}\n{entry['sequence']}\n")
 
-def process_fasta_part(part_entries, part_index, num_parts, fasta_file):
-    """
-    处理每个部分的FASTA条目并保存预测结果。
-    """
-    unique_id = uuid.uuid4().hex  # 生成唯一标识符
-    temp_dir = os.path.join(os.path.dirname(fasta_file), f"{unique_id}_part{part_index}")
-    os.makedirs(temp_dir, exist_ok=True)  # 创建临时目录
+# def process_fasta_part(part_entries, part_index, num_parts, fasta_file):
+#     """
+#     处理每个部分的FASTA条目并保存预测结果。
+#     """
+#     unique_id = uuid.uuid4().hex  # 生成唯一标识符
+#     temp_dir = os.path.join(os.path.dirname(fasta_file), f"{unique_id}_part{part_index}")
+#     os.makedirs(temp_dir, exist_ok=True)  # 创建临时目录
 
-    ipr_domains_list = []
-    go_numbers_list = []
+#     ipr_domains_list = []
+#     go_numbers_list = []
 
-    for i, entry in tqdm(enumerate(part_entries), desc=f"Processing part {part_index}/{num_parts}"):
-        # 为每个条目创建临时FASTA文件
-        temp_fasta_file = os.path.join(temp_dir, f"temp_fasta_{i}.fasta")
+#     for i, entry in tqdm(enumerate(part_entries), desc=f"Processing part {part_index}/{num_parts}"):
+#         # 为每个条目创建临时FASTA文件
+#         temp_fasta_file = os.path.join(temp_dir, f"temp_fasta_{i}.fasta")
+#         save_single_fasta(entry, temp_fasta_file)
+
+#         # 为 InterProScan 生成的输出文件名
+#         interpro_output_file = os.path.join(temp_dir, f"interpro_output_{i}.tsv")
+
+#         # 运行 InterProScan，并获取 IPR 和 GO numbers
+#         ipr_domains, go_numbers = run_interproscan(temp_fasta_file, interpro_output_file)
+
+#         # 将结果添加到列表
+#         ipr_domains_list.append(ipr_domains)
+#         go_numbers_list.append(go_numbers)
+
+#         # 删除临时文件
+#         os.remove(temp_fasta_file)
+#         os.remove(interpro_output_file)
+
+#     # 保存每个部分的预测结果
+#     part_pkl_path = os.path.splitext(fasta_file)[0] + f'_part{part_index}.pkl'
+#     with open(part_pkl_path, 'wb') as pkl_file:
+#         pickle.dump((ipr_domains_list, go_numbers_list), pkl_file)
+
+#     shutil.rmtree(temp_dir)
+
+#     return part_pkl_path
+
+def _process_single_entry(args):
+    """
+    用于并行处理单个FASTA entry。
+    """
+    i, entry, temp_dir = args
+    temp_fasta_file = os.path.join(temp_dir, f"temp_fasta_{i}.fasta")
+    interpro_output_file = os.path.join(temp_dir, f"interpro_output_{i}.tsv")
+
+    try:
         save_single_fasta(entry, temp_fasta_file)
-
-        # 为 InterProScan 生成的输出文件名
-        interpro_output_file = os.path.join(temp_dir, f"interpro_output_{i}.tsv")
-
-        # 运行 InterProScan，并获取 IPR 和 GO numbers
         ipr_domains, go_numbers = run_interproscan(temp_fasta_file, interpro_output_file)
+        return (ipr_domains, go_numbers)
+    except Exception as e:
+        print(f"[ERROR] Entry {i} failed: {e}")
+        return ([], [])
+    finally:
+        # 清理临时文件
+        if os.path.exists(temp_fasta_file):
+            os.remove(temp_fasta_file)
+        if os.path.exists(interpro_output_file):
+            os.remove(interpro_output_file)
 
-        # 将结果添加到列表
-        ipr_domains_list.append(ipr_domains)
-        go_numbers_list.append(go_numbers)
 
-        # 删除临时文件
-        os.remove(temp_fasta_file)
-        os.remove(interpro_output_file)
+def process_fasta_part(part_entries, part_index, num_parts, fasta_file, num_workers=None):
+    """
+    并行处理每个部分的FASTA条目并保存预测结果。
+    """
+    unique_id = uuid.uuid4().hex
+    temp_dir = os.path.join(os.path.dirname(fasta_file), f"{unique_id}_part{part_index}")
+    os.makedirs(temp_dir, exist_ok=True)
 
-    # 保存每个部分的预测结果
+    # 默认使用系统CPU数（最多8个）
+    if num_workers is None:
+        num_workers = min(multiprocessing.cpu_count(), 32)
+
+    args_list = [(i, entry, temp_dir) for i, entry in enumerate(part_entries)]
+
+    with multiprocessing.Pool(processes=num_workers) as pool:
+        results = list(tqdm(pool.imap(_process_single_entry, args_list), total=len(args_list),
+                            desc=f"Processing part {part_index}/{num_parts}"))
+
+    # 拆分结果
+    ipr_domains_list = [res[0] for res in results]
+    go_numbers_list = [res[1] for res in results]
+
+    # 保存预测结果
     part_pkl_path = os.path.splitext(fasta_file)[0] + f'_part{part_index}.pkl'
     with open(part_pkl_path, 'wb') as pkl_file:
         pickle.dump((ipr_domains_list, go_numbers_list), pkl_file)
