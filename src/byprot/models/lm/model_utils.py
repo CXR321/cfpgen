@@ -4,17 +4,23 @@
 
 
 from byprot.models.lm.esm_dplm import EsmForDPLM
-from byprot.models.lm.esm_cfpgen import EsmForCFPGEN
+from byprot.models.lm.esm_cfpgen import EsmForCFPGEN, EsmForCFPGEN_DPLM2
 from byprot.models.lm.esm_cfpgen_if import EsmForCFPGenInverseFolding
+from byprot.models.lm.dplm2 import MultimodalDiffusionProteinLanguageModel
 from dataclasses import dataclass, field
 from transformers import AutoModelForMaskedLM, AutoConfig, AutoTokenizer
 import torch
 import os
+# try:
+#     from peft import get_peft_model, LoraConfig, TaskType
+# except:
+#     pass
+
 try:
-    from peft import get_peft_model, LoraConfig, TaskType
+    from peft import LoraConfig, TaskType, get_peft_model
+    from peft.peft_model import PeftModel
 except:
     pass
-
 
 @dataclass
 class CondConfig:
@@ -64,6 +70,8 @@ def get_net_class(arch_type):
     # TODO: dplm will support more architectures, such as Llama
     elif arch_type == 'func_esm':
         return EsmForCFPGEN
+    elif arch_type == 'func_esm_dplm2':
+        return EsmForCFPGEN_DPLM2
     else:
         raise NotImplementedError
 
@@ -106,27 +114,60 @@ def get_net(cfg):
             if 'cond' in cfg:
                 config.update(cfg.cond)
             net = EsmForCFPGEN(config, dropout=cfg.net.dropout)
+        elif cfg.net.arch_type == 'func_esm_dplm2':
+            # print(f"net name: {cfg.net.name}")
+            config = AutoConfig.from_pretrained(f'{cfg.net.name}')
+
+            config.hidden_dropout_prob = cfg.net.dropout
+            config.tie_word_embeddings = False
+            config.vocab_size = 8229
+
+            # print(f"config: {config}")
+            if 'cond' in cfg:
+                config.update(cfg.cond)
+
+            pretrained_net = (
+                MultimodalDiffusionProteinLanguageModel.from_pretrained(
+                    "airkingbd/dplm2_650m"
+                ).net
+            )
+
+            net = EsmForCFPGEN_DPLM2(config, dropout=cfg.net.dropout)
+            # print(f"net complete: {net}")
+
+            if issubclass(type(pretrained_net), PeftModel):
+                pretrained_net = pretrained_net.merge_and_unload()
+            pretrained_state_dict = pretrained_net.state_dict()
+            result = net.load_state_dict(pretrained_state_dict, strict=False)
+
+            print("Missing keys (in model but not in pretrained):", result.missing_keys)
+            print("Unexpected keys (in pretrained but not in model):", result.unexpected_keys)
+
+            exit()
+
+
         else:
             raise NotImplementedError
 
         # 2-stage training (please refer to our paper for more details.)
         ## stage 1: pretrain a masked language model (MLM) from scratch
         ## stage 2: continue pretrain a diffusion language model based on the pretrained MLM
-        if cfg.net.pretrain:
-            pretrained_model_name_or_path = cfg.net.pretrained_model_name_or_path
-            # is_local = os.path.isdir(pretrained_model_name_or_path)
-            is_local = os.path.isfile(pretrained_model_name_or_path)
-            if is_local:
-                # load your pretrained MLM from local
-                state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
-                # net.load_state_dict(state_dict, strict=True)
-                loaded_keys, missing_keys, unexpected_keys = load_state_dict_with_report(net, state_dict, strict=False)
+        # TODO: 本质都是load，先屏蔽了
+        # if cfg.net.pretrain:
+        #     pretrained_model_name_or_path = cfg.net.pretrained_model_name_or_path
+        #     # is_local = os.path.isdir(pretrained_model_name_or_path)
+        #     is_local = os.path.isfile(pretrained_model_name_or_path)
+        #     if is_local:
+        #         # load your pretrained MLM from local
+        #         state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
+        #         # net.load_state_dict(state_dict, strict=True)
+        #         loaded_keys, missing_keys, unexpected_keys = load_state_dict_with_report(net, state_dict, strict=False)
 
-            else:
-                # or you can load a pretrained MLM from huggingface
-                ptrn_net = AutoModelForMaskedLM.from_pretrained(pretrained_model_name_or_path)
-                net.load_state_dict(ptrn_net.state_dict(), strict=True)
-                del ptrn_net
+        #     else:
+        #         # or you can load a pretrained MLM from huggingface
+        #         ptrn_net = AutoModelForMaskedLM.from_pretrained(pretrained_model_name_or_path)
+        #         net.load_state_dict(ptrn_net.state_dict(), strict=True)
+        #         del ptrn_net
             
     # activate lora training if possible
     if cfg.lora.lora:
@@ -162,6 +203,30 @@ def topk_masking(scores, cutoff_len, stochastic=False, temp=1.0):
     masking = _scores < cutoff
     return masking
 
+def topk_masking_prior(
+    scores, cutoff_len, stochastic=False, temp=1.0, prior_mask=None
+):
+    """
+    scores: [b, n]
+    cutoff_len: [b, 1]
+    stochastic: bool, whether to add noise to select top_k or not
+    returns:
+        mask: [b, n], with 1 if the token is in top-k lowest scores, 0 otherwise
+    """
+    if stochastic:
+        gumbel_noise = -torch.log(
+            -torch.log(torch.rand_like(scores) + 1e-8) + 1e-8
+        )
+        _scores = scores + temp * gumbel_noise
+    else:
+        _scores = scores
+    sorted_index = _scores.sort(-1)[0]
+    cutoff = sorted_index.gather(
+        dim=-1, index=cutoff_len
+    )  # + torch.tensor(1e-10)
+    # cutoff_len = k -> select k + 1 tokens
+    masking = _scores < cutoff
+    return masking
 
 def sample_from_categorical(logits=None, temperature=1.0):
     if temperature:
@@ -209,3 +274,31 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.95, filter_value=-float('Inf'
     logits = torch.gather(sorted_logits, 1, sorted_indices.argsort(-1))
     logits = logits.reshape(ori_shape) 
     return logits
+
+
+# def get_struct_tokenizer(
+#     model_name_or_path="airkingbd/struct_tokenizer", eval_mode=True
+# ):
+#     from byprot.models.structok.structok_lfq import VQModel
+
+#     if os.path.exists(model_name_or_path):
+#         root_path = f"{model_name_or_path}/.hydra"
+#     else:
+#         root_path = Path(snapshot_download(repo_id=model_name_or_path, local_dir="./checkpoints"))
+#     cfg = load_yaml_config(f"{root_path}/config.yaml")
+#     stok = VQModel(**cfg)
+#     pretrained_state_dict = torch.load(
+#         f"{root_path}/dplm2_struct_tokenizer.ckpt",
+#         map_location=torch.device("cpu"),
+#     )
+#     missing, unexpected = stok.load_state_dict(
+#         pretrained_state_dict, strict=False
+#     )
+#     print(
+#         f'Restored from "{model_name_or_path}" with {len(missing)} missing and {len(unexpected)} unexpected keys'
+#     )
+#     if len(missing) > 0:
+#         print(f"Missing Keys: {missing}")
+#         print(f"Unexpected Keys: {unexpected}")
+#     stok = stok.requires_grad_(False)
+#     return stok.train(not eval_mode)

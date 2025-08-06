@@ -1,3 +1,4 @@
+import struct
 from datasets import load_dataset
 import pickle
 import os
@@ -5,8 +6,24 @@ import requests
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from tqdm import tqdm
+from biotite.sequence.io import fasta
 
 # Login using e.g. `huggingface-cli login` to access this dataset
+
+with open("data-bin/uniprotKB/cfpgen_general_dataset/train_expanded.pkl", "rb") as f:
+    train_data_expanded = pickle.load(f)
+
+test = train_data_expanded[0]
+print(test)
+print(len(test["sequence"]))
+print(test["sequence"])
+print(len(test["aa_seq"]))
+print(test["aa_seq"])
+print(len(test["struct_seq"]))
+print(test["struct_seq"])
+
+exit()
+
 swiss_prot = load_dataset("airkingbd/pdb_swissprot", "train", cache_dir="data-bin")
 # print(ds['train'][1])
 # ds = load_dataset("airkingbd/pdb_swissprot", "valid", cache_dir="data-bin")
@@ -15,26 +32,106 @@ swiss_prot = load_dataset("airkingbd/pdb_swissprot", "train", cache_dir="data-bi
 
 swiss_train = swiss_prot["train"]
 
-pdb_map = {}
+print(swiss_train[0])
+
+# pdb_map = {}
+# for entry in swiss_train:
+#     pdb_name = entry["pdb_name"]
+#     if pdb_name.startswith("AF-") and "-model_v" in pdb_name:
+#         uniprot_id = pdb_name.split("-")[1]  # "AF-Q60888-model_v4" -> "Q60888"
+#         pdb_map[uniprot_id] = pdb_name
+
+# 构建 swiss_train 的索引：{uniprot_id: entry}
+swiss_index = {}
 for entry in swiss_train:
     pdb_name = entry["pdb_name"]
     if pdb_name.startswith("AF-") and "-model_v" in pdb_name:
-        uniprot_id = pdb_name.split("-")[1]  # "AF-Q60888-model_v4" -> "Q60888"
-        pdb_map[uniprot_id] = pdb_name
+        uniprot_id = pdb_name.split("-")[1]
+        swiss_index[uniprot_id] = entry
 
-# with open("data-bin/uniprotKB/cfpgen_general_dataset/train.pkl", 'rb') as f:
-#     train_data = pickle.load(f)
+with open("data-bin/uniprotKB/cfpgen_general_dataset/train.pkl", 'rb') as f:
+    train_data = pickle.load(f)
 
-# with open("data-bin/uniprotKB/cfpgen_general_dataset/valid.pkl", 'rb') as f:
-#     valid_data = pickle.load(f)
+with open("data-bin/uniprotKB/cfpgen_general_dataset/valid.pkl", 'rb') as f:
+    valid_data = pickle.load(f)
 
 with open("data-bin/uniprotKB/cfpgen_general_dataset/test.pkl", 'rb') as f:
     test_data = pickle.load(f)
 
 
+aa_seq = fasta.FastaFile.read("/AIRvePFS/dair/chenxr-data/repo/cfpgen/data-bin/tokenized_missed_pdb/aa_seq.fasta")
+struct_seq = fasta.FastaFile.read("/AIRvePFS/dair/chenxr-data/repo/cfpgen/data-bin/tokenized_missed_pdb/struct_seq.fasta")
+
+aa_seq_dict = dict(aa_seq.items())
+struct_seq_dict = dict(struct_seq.items())
+
+
+
+# 通用处理函数，返回：扩展后数据 + 缺失ID列表
+def expand_and_filter_dataset(dataset, dataset_name):
+    expanded = []
+    missing_ids = []
+
+    for item in tqdm(dataset, desc=f"Processing {dataset_name}"):
+        uniprot_id = item.get("uniprot_id")
+        pdb_key = f"AF-{uniprot_id}-F1-model_v4"
+
+        aa_seq = None
+        struct_seq = None
+
+        # 优先从 swiss_train 中找
+        if uniprot_id in swiss_index:
+            entry = swiss_index[uniprot_id]
+            aa_seq = entry.get("aa_seq")
+            struct_seq = entry.get("struct_seq")
+        # 其次尝试从 fasta 文件中找
+        elif pdb_key in aa_seq_dict and pdb_key in struct_seq_dict:
+            # print("in")
+            aa_seq = aa_seq_dict[pdb_key]
+            struct_seq = struct_seq_dict[pdb_key]
+
+        # 判断是否找到序列
+        if aa_seq and struct_seq:
+            item["aa_seq"] = aa_seq
+            item["struct_seq"] = struct_seq
+            expanded.append(item)
+        else:
+            missing_ids.append(uniprot_id)
+
+    return expanded, missing_ids
+
+# 处理三个数据集
+train_data_expanded, train_missing = expand_and_filter_dataset(train_data, "train")
+valid_data_expanded, valid_missing = expand_and_filter_dataset(valid_data, "valid")
+test_data_expanded, test_missing = expand_and_filter_dataset(test_data, "test")
+
+# 保存扩展后的数据集（已剔除缺失项）
+with open("data-bin/uniprotKB/cfpgen_general_dataset/train_expanded.pkl", "wb") as f:
+    pickle.dump(train_data_expanded, f)
+
+with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "wb") as f:
+    pickle.dump(valid_data_expanded, f)
+
+with open("data-bin/uniprotKB/cfpgen_general_dataset/test_expanded.pkl", "wb") as f:
+    pickle.dump(test_data_expanded, f)
+
+# 汇总所有缺失项并保存
+all_missing = set(train_missing + valid_missing + test_missing)
+with open("missing_uniprot_ids.txt", "w") as f:
+    for uid in sorted(all_missing):
+        f.write(uid + "\n")
+
+print(f"Total entries removed due to missing seq: {len(all_missing)}")
+print(f"Final train: {len(train_data_expanded)}  valid: {len(valid_data_expanded)}  test: {len(test_data_expanded)}")
+
+exit()
+
+# print(dict(aa_seq.items()))
+# print(dict(struct_seq.items())["AF-Q3KI22-F1-model_v4"])
+
 # print(f"len train data: {len(train_data)}")
 # print(f"len valid data: {len(valid_data)}")
-print(f"len test data: {len(test_data)}")
+# print(f"len test data: {len(test_data)}")
 
 # exit()
 
@@ -93,8 +190,8 @@ def download_all_with_multiprocessing(uniprot_ids, save_dir, num_workers=None):
 
 # download_all_with_multiprocessing(missing, save_dir, num_workers=128)
 
-missing = [item["uniprot_id"] for item in test_data if item["uniprot_id"] not in pdb_map]
-print(f"Missing PDB for {len(missing)} entries:", missing[:5])
+# missing = [item["uniprot_id"] for item in test_data if item["uniprot_id"] not in pdb_map]
+# print(f"Missing PDB for {len(missing)} entries:", missing[:5])
 
-download_all_with_multiprocessing(missing, save_dir, num_workers=128)
+# download_all_with_multiprocessing(missing, save_dir, num_workers=128)
 

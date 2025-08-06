@@ -1,0 +1,13 @@
+_target_: uniprotKB_dplm2
+
+
+data_dir: ${paths.data_dir}/uniprotKB/cfpgen_general_dataset
+#data_dir: ${paths.data_dir}/uniprotKB/cfpgen_enzyme_dataset
+
+max_tokens: 6000
+max_len: 1022
+sort: false
+num_workers: 8
+pin_memory: true
+
+mini_run: false

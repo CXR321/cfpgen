@@ -127,6 +127,7 @@ def instantiate_from_config(cfg: OmegaConf, group=None, **override_kwargs):
         target = _convert_target_to_string(target)
         log.info(f"    Resolving {group} <{_target_}> -> <{target}>")
 
+        # print(f"target_cls: {target}")
         target_cls = get_obj_from_str(target)
         try:
             return target_cls(**cfg, **override_kwargs)
