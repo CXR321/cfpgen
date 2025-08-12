@@ -1,0 +1,32 @@
+seed: 42
+
+# run_name: go-ipr-motif
+run_name: go-ipr-500iter-repeat_cut
+
+# ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/last.ckpt
+ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/best.ckpt
+# ckpt_path: temp_checkpoints/checkpoints/last.ckpt
+# ckpt_path: pretrained/cfpgen_650m/checkpoints/last.ckpt
+
+input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_expanded.pkl
+
+saveto: generation-results-dplm2/
+# saveto: generation-results-cfpgen_650m/
+
+num_seqs: 1
+
+seq_lens: [200, 400]  # for general proteins
+#seq_lens: [300, 500]  # for enzyme dataset
+
+use_go: true
+use_ipr: true
+use_ec: false
+use_seq_motif: false
+motif_min: 10
+motif_max: 30
+
+sampling_strategy: annealing@2.0:1.0
+max_iter: 500 # 100 ori
+
+debug: false
+

@@ -1233,7 +1233,12 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             most_token = None
             most_token_num = -1
             for j, token in enumerate(seq):
+                
                 token = int(token)
+                if token == self.pad_id or token >= 33:
+                    # just check aa
+                    continue
+                
                 if token not in most_token_dict:
                     most_token_dict[token] = [j]
                 else:
@@ -1241,17 +1246,32 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 if len(most_token_dict[token]) > most_token_num:
                     most_token = token
                     most_token_num = len(most_token_dict[token])
-            if most_token_num > len(seq) * ratio:#max(0.3/(step+1) ** 0.2, 0.1):
+            if most_token_num > len(seq) * ratio * 0.5:#max(0.3/(step+1) ** 0.2, 0.1):
                 to_be_resample_idx.append(i)
                 resample_input_scores.append(_scores[i])
                 mask = torch.zeros_like(seq).bool()
                 for k, v in most_token_dict.items():
-                    if len(v) > len(seq) * ratio:#max(0.3/(step+1) ** 0.2, 0.1):
+                    if len(v) > len(seq) * ratio * 0.5:#max(0.3/(step+1) ** 0.2, 0.1):
                         mask |= seq.eq(k)
-                resample_input_mask.append(mask)
-                resample_input.append(seq.masked_fill(mask, self.mask_id))
+                # resample_input_mask.append(mask)
+                # resample_input.append(seq.masked_fill(mask, self.aa_mask_id))
+
+                seq = seq.masked_fill(mask, self.aa_mask_id)
+                
+                struct_mask = torch.zeros_like(seq).bool()
+                for id, value in enumerate(mask):
+                    if value:
+                        struct_mask[id - (len(seq) // 2)] = value
+
+                seq = seq.masked_fill(struct_mask, self.struct_mask_id)
+
+                all_mask = struct_mask | mask
+                resample_input_mask.append(all_mask)
+                resample_input.append(seq)
+                
                 if seq_cond is not None:
-                    resample_input_seq_cond.append(seq_cond[i].masked_fill(mask, self.mask_id))
+                    raise NotImplementedError
+                    # resample_input_seq_cond.append(seq_cond[i].masked_fill(mask, self.mask_id))
                 #resample_input.append(seq.masked_scatter(mask, xt[i][mask]))
             
         if len(to_be_resample_idx) > 0:
@@ -1259,20 +1279,33 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             resample_input_scores = torch.stack(resample_input_scores, dim=0).type_as(_scores)
             resample_input_mask = torch.stack(resample_input_mask, dim=0).type_as(_tokens).bool()
             if seq_cond is not None:
+                raise NotImplementedError
                 resample_input_seq_cond = torch.stack(resample_input_seq_cond, dim=0).type_as(_tokens)
 
             inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec)
+
+            type_ids = self.get_modality_type(_tokens)
+            
             resample_logits = self.net(
-                input_ids=inputs,
+                input_ids=inputs, type_ids=type_ids
             )['logits']
             if resample_logits.dtype != _scores.dtype:
                 resample_logits = resample_logits.type_as(_scores)
-            resample_logits[..., self.mask_id] = -math.inf
-            resample_logits[..., self.x_id] = -math.inf
-            resample_logits[..., self.pad_id] = -math.inf
-            resample_logits[..., self.bos_id] = -math.inf
-            resample_logits[..., self.eos_id] = -math.inf
+
             
+            output_masks = self.get_non_special_symbol_mask(_tokens, partial_masks=None)
+
+            aa_position = type_ids.eq(self.aa_type) & output_masks
+            struct_position = type_ids.eq(self.struct_type) & output_masks
+            indices_aa = torch.where(aa_position)
+            indices_struct = torch.where(struct_position)
+
+            # HACK: all amino acid token id < 33, while all struct token id >= 33
+            resample_logits[indices_aa[0], indices_aa[1], 33:] = -math.inf
+            resample_logits[indices_struct[0], indices_struct[1], :33] = -math.inf
+
+            resample_logits[..., self.special_token_list] = -math.inf
+
             resample_logits = top_k_top_p_filtering(resample_logits, top_p=0.95)
             #noise_scale = 1.5 - 0.2 * ((step + 1) / max_step)
             noise_scale = scale
@@ -1293,7 +1326,18 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         output_masks = self.get_non_special_symbol_mask(output_tokens, partial_masks=partial_masks)
 
         inputs = dict(x_t=output_tokens, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
-        net_out = self.net(inputs)
+
+        input_mask = output_tokens.ne(self.pad_id)
+        L = output_tokens.shape[1]
+        num_heads = self.net.config.num_attention_heads
+        attention_bias: torch.FloatType = (
+            self.net.esm.get_extended_attention_mask(
+                input_mask, output_tokens.shape
+            ).repeat(1, num_heads, L, 1)
+        )
+        # print(attention_bias.shape)
+
+        net_out = self.net(input_ids=inputs,attention_mask=attention_bias,type_ids=self.get_modality_type(output_tokens))
 
         # TODO: BUG?? 没取logsoftmax，检查要不要logsoftmax，后续处理也有存在logsoftmax的地方
         # 但是不影响
@@ -1356,9 +1400,14 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             _tokens, _scores = stochastic_sample_from_categorical(
                 logits, temperature=0.0, noise_scale=noise_scale
             )
+
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
+
             _tokens.masked_scatter_(
                 ~output_masks, output_tokens[~output_masks]
             )
+
+            
         elif sampling_strategy.startswith("annealing"):
             max_temp, min_temp = map(
                 float, sampling_strategy.split("@")[1].split(":")
@@ -1368,6 +1417,8 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             _tokens, _scores = sample_from_categorical(
                 logits, temperature=temperature
             )
+
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
         else:
             _tokens, _scores = sample_from_categorical(
                 logits, temperature=temperature
@@ -1699,12 +1750,15 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         # tokenizer = tokenizer
         # max_iter = max_iter
         # temperature = temperature
+        self.eval()
+        max_iter = max_iter
+        temperature = temperature
 
         # 0) encoding
         encoder_out = self.forward_encoder(batch)
         # 1) initialized from all mask tokens, where partial_masks will fix motif
         initial_output_tokens, initial_output_scores = self.initialize_output_tokens(
-            batch, encoder_out=encoder_out, partial_masks=partial_masks)  #
+            batch.get("input_ids"), encoder_out=encoder_out, partial_masks=partial_masks)  #
         prev_decoder_out = dict(
             output_tokens=initial_output_tokens,
             output_scores=initial_output_scores,

@@ -143,7 +143,7 @@ def get_net(cfg):
             print("Missing keys (in model but not in pretrained):", result.missing_keys)
             print("Unexpected keys (in pretrained but not in model):", result.unexpected_keys)
 
-            exit()
+            # exit()
 
 
         else:

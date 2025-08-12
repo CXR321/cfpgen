@@ -116,7 +116,7 @@ trainer:
   reload_dataloaders_every_n_epochs: 1
   use_distributed_sampler: false
   max_steps: 200_000
-  accumulate_grad_batches: 32  # 32 with 4 GPUs
+  accumulate_grad_batches: 1  # 32 with 4 GPUs
   check_val_every_n_epoch: null
   val_check_interval: 1000
   enable_progress_bar: true

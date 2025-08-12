@@ -229,7 +229,7 @@ class CFPGENTrainingTask(TaskLitModule):
 
 
 @register_task('lm/cfp_gen_dplm2')
-class CFPGENTrainingTask(TaskLitModule):
+class CFPGENTrainingTaskDPLM2(TaskLitModule):
     _DEFAULT_CFG: DictConfig = Cfg(
         learning=Cfg(
             noise='rdm',  # ['full_mask', 'random_mask']
@@ -325,6 +325,9 @@ class CFPGENTrainingTask(TaskLitModule):
     def training_step(self, batch: Any, batch_idx: int):
         loss, logging_output = self.step(batch)
 
+        # if self.trainer.is_global_zero:
+        #     print(f"batch idx: {batch_idx}, global step: {self.global_step}, epoch: {self.current_epoch}, batch shape: {batch['struct_tokens']['targets'].shape}")
+        
         # log train metrics
         self.log('global_step', self.global_step, on_step=True, on_epoch=False, prog_bar=True)
         self.log('lr', self.lrate, on_step=True, on_epoch=False, prog_bar=True)

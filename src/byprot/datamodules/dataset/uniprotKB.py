@@ -133,6 +133,12 @@ class ApproxBatchSampler(BatchSampler):
             print(f'==============Local Rank {self.sampler.rank} Num Samples {num_samples}==============')
             dist.all_reduce(num_samples, op=dist.ReduceOp.MAX)
             print(f'==============All Reduce Num Samples {num_samples}==============')
+
+            # print(batches[0].shape)
+
+            # if num_samples > 100:
+            #     print(batches)
+            #     exit()
             num_samples = num_samples.item()
 
             if len(batches) < num_samples:
@@ -240,7 +246,7 @@ class UniProtKB_DPLM2_Dataset(Dataset):
             self.indices = pickle.load(f)
 
         log.info(f"Dataset size: {len(self.indices)}")
-        self.metadata_lens = [len(ele['sequence']) for ele in self.indices]
+        self.metadata_lens = [len(ele['aa_seq']) for ele in self.indices]
         self.max_len = self.data_dir.max_len
 
         self.tokenizer = DPLM2Tokenizer.from_pretrained("airkingbd/dplm2_650m")
@@ -593,7 +599,11 @@ def setup_dataloader_dplm2(
         )
 
     # 检查dl的第一个元素
+    # num = 0
     # for batch in dl:
     #     print(f"batch: {batch['struct_tokens']['targets'].shape}")
-    #     exit()
+    #     num += 1
+    # print(f"num: {num}")
+    
+    # exit()
     return dl

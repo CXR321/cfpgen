@@ -13,14 +13,26 @@ from biotite.sequence.io import fasta
 with open("data-bin/uniprotKB/cfpgen_general_dataset/train_expanded.pkl", "rb") as f:
     train_data_expanded = pickle.load(f)
 
-test = train_data_expanded[0]
-print(test)
-print(len(test["sequence"]))
-print(test["sequence"])
-print(len(test["aa_seq"]))
-print(test["aa_seq"])
-print(len(test["struct_seq"]))
-print(test["struct_seq"])
+with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "rb") as f:
+    valid_data_expanded = pickle.load(f)
+
+# test = train_data_expanded[0]
+# print(test)
+# print(len(test["sequence"]))
+# print(test["sequence"])
+# print(len(test["aa_seq"]))
+# print(test["aa_seq"])
+# print(len(test["struct_seq"]))
+# print(test["struct_seq"])
+
+# length = [len(item["sequence"]) for item in train_data_expanded]
+# length = sorted(length)
+
+valid_length = [len(item["aa_seq"]) for item in valid_data_expanded]
+valid_length = sorted(valid_length)
+
+# print(length)
+print(valid_length)
 
 exit()
 
@@ -125,6 +137,7 @@ print(f"Total entries removed due to missing seq: {len(all_missing)}")
 print(f"Final train: {len(train_data_expanded)}  valid: {len(valid_data_expanded)}  test: {len(test_data_expanded)}")
 
 exit()
+
 
 # print(dict(aa_seq.items()))
 # print(dict(struct_seq.items())["AF-Q3KI22-F1-model_v4"])

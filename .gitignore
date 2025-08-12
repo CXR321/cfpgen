@@ -162,8 +162,10 @@ run/logs
 *.txt
 *.tsv
 *.pkl
+*.gz
 
-
+deepgo2/
+temp_checkpoints/
 byprot-checkpoints/
 generation-results/
 data-bin/scaffolding-pdbs/

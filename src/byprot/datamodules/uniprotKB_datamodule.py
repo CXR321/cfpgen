@@ -13,7 +13,7 @@ from byprot.datamodules import register_datamodule
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from byprot.datamodules.dataset.uniprotKB import UniProtKBDataset, setup_dataloader, Subset, UniProtKBDatasetForTesting, UniProtKB_DPLM2_Dataset, setup_dataloader_dplm2
+from byprot.datamodules.dataset.uniprotKB import UniProtKBDataset, setup_dataloader, Subset, UniProtKBDatasetForTesting, UniProtKB_DPLM2_Dataset, setup_dataloader_dplm2, UniProtKB_DPLM2_DatasetForTesting
 
 log = utils.get_logger(__name__)
 
@@ -174,8 +174,8 @@ class UniprotKBDataModuleDPLM2(LightningDataModule):
                 self.valid_dataset = Subset(self.valid_dataset, valid_indices)
         elif stage == 'test' or stage == 'predict':
             # TODO how to test by DPLM2?
-            self.test_dataset = UniProtKBDatasetForTesting(max_len=self.hparams.max_len, num_seqs=self.hparams.num_seqs)
-            self.train_dataset = UniProtKBDatasetForTesting(max_len=self.hparams.max_len, num_seqs=self.hparams.num_seqs) # used for deepspeed
+            self.test_dataset = UniProtKB_DPLM2_DatasetForTesting(max_len=self.hparams.max_len, num_seqs=self.hparams.num_seqs)
+            self.train_dataset = UniProtKB_DPLM2_DatasetForTesting(max_len=self.hparams.max_len, num_seqs=self.hparams.num_seqs) # used for deepspeed
         else:
             raise ValueError(f"Invalid stage: {stage}.")
         self.stage = stage

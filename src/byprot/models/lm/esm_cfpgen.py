@@ -1210,6 +1210,8 @@ class ModifiedEsmModelDPLM2(EsmModel):
             type_ids: Optional[torch.Tensor] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
 
+    
+
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1256,6 +1258,10 @@ class ModifiedEsmModelDPLM2(EsmModel):
         # TODO: maybe bug
         if attention_mask.dim() == 4:
             extended_attention_mask = attention_mask
+        elif attention_mask.dim() == 2:
+            extended_attention_mask: torch.Tensor = (
+                self.get_extended_attention_mask(attention_mask, input_shape)
+            )
         else:
             raise ValueError(
                 f"Wrong shape for attention_mask (shape {attention_mask.shape})! "
