@@ -16,6 +16,8 @@ from pytorch_lightning import (
     seed_everything,
     
 )
+
+from lightning.pytorch.loggers import WandbLogger
 from pytorch_lightning.loggers import Logger as LightopenningLoggerBase
 import torch
 from torch import nn
@@ -113,6 +115,10 @@ def train(config: DictConfig) -> Optional[float]:
 
     # Init lightning trainer
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
+
+    # logger is none
+    logger = [WandbLogger(log_model="all", project="cfpgen_dplm2")]
+
     trainer: Trainer = hydra.utils.instantiate(
         config.trainer, callbacks=callbacks, logger=logger, _convert_="partial"
     )

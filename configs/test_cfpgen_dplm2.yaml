@@ -1,10 +1,12 @@
 seed: 42
 
 # run_name: go-ipr-motif
-run_name: go-ipr-500iter-repeat_cut
+# run_name: go-ipr-500iter-repeat_cut
+run_name: go-ipr-500iter-repeat_cut-debug
 
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/last.ckpt
-ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/best.ckpt
+# ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/best.ckpt
+ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_debug/checkpoints/step_89999.0-loss_0.72.ckpt
 # ckpt_path: temp_checkpoints/checkpoints/last.ckpt
 # ckpt_path: pretrained/cfpgen_650m/checkpoints/last.ckpt
 

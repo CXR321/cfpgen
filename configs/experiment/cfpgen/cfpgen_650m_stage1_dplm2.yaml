@@ -70,6 +70,8 @@ model:
   struct_tokenizer:
     exp_path: airkingbd/struct_tokenizer
 
+  use_diff_modulation: true
+
 
 task:
   _target_: lm/cfp_gen_dplm2

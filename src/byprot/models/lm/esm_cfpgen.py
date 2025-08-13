@@ -242,6 +242,27 @@ class RCFEBlock(nn.Module):
 def modulate(x, shift, scale):
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
+def modulate_diff(x, shift, scale):
+    b, n, hid = x.shape
+
+    # print(f"x.shape: {x.shape}")
+    # print(f"shift.shape: {shift[0].shape}")
+    # print(f"scale.shape: {scale[0].shape}")
+    n_half = n // 2  # 假设 n 是偶数
+
+    # 生成一个 (b, n, hid) 的掩码，标记前半部分为1，后半部分为0
+    mask = torch.zeros_like(x)
+    mask[:, :n_half, :] = 1  # 前半部分为1，后半部分为0
+
+    # 分别计算前后两部分的调制结果
+    modulated = (
+        (x * (1 + scale[0].unsqueeze(1)) + shift[0].unsqueeze(1))  # 前半部分调制
+    ) * mask + (
+        (x * (1 + scale[1].unsqueeze(1)) + shift[1].unsqueeze(1))  # 后半部分调制
+    ) * (1 - mask)
+
+    return modulated
+
 
 class AGFMSelfOutput(nn.Module):
 
@@ -254,7 +275,28 @@ class AGFMSelfOutput(nn.Module):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         if gate is not None:
-            hidden_states = gate.unsqueeze(1) * hidden_states + input_tensor
+            if isinstance(gate, list):  # 如果 gate 是 list，则分段处理
+                gate1, gate2 = gate  # 拆分成两部分
+                n = hidden_states.shape[1]  # 序列长度
+                n_half = n // 2  # 前半部分长度
+
+                # print(f"gate1.shape: {gate1.shape}")
+                # print(f"gate2.shape: {gate2.shape}")
+                # print(f"hidden_states.shape: {hidden_states.shape}")
+                # print(f"input_tensor.shape: {input_tensor.shape}")
+                    
+                # 生成前后半部分的 Mask (形状: (1, n, 1))
+                mask = torch.zeros_like(hidden_states)
+                mask[:, :n_half, :] = 1  # 前半部分为 1，后半部分为 0
+
+                # 计算前后半部分的调制结果
+                modulated_part1 = gate1.unsqueeze(1) * hidden_states + input_tensor
+                modulated_part2 = gate2.unsqueeze(1) * hidden_states + input_tensor
+
+                # 合并结果（Mask 加权）
+                hidden_states = mask * modulated_part1 + (1 - mask) * modulated_part2
+            else:  # 如果 gate 不是 list，则全局应用
+                hidden_states = gate.unsqueeze(1) * hidden_states + input_tensor
         else:
             hidden_states = hidden_states + input_tensor
         return hidden_states
@@ -265,7 +307,28 @@ class AGFMOutput(EsmOutput):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         if gate is not None:
-            hidden_states = gate.unsqueeze(1) * hidden_states + input_tensor
+            if isinstance(gate, list):  # 如果 gate 是 list，则分段处理
+                gate1, gate2 = gate  # 拆分成两部分
+                n = hidden_states.shape[1]  # 序列长度
+                n_half = n // 2  # 前半部分长度
+
+                # print(f"gate1.shape: {gate1.shape}")
+                # print(f"gate2.shape: {gate2.shape}")
+                # print(f"hidden_states.shape: {hidden_states.shape}")
+                # print(f"input_tensor.shape: {input_tensor.shape}")
+
+                # 生成前后半部分的 Mask (形状: (1, n, 1))
+                mask = torch.zeros_like(hidden_states)
+                mask[:, :n_half, :] = 1  # 前半部分为 1，后半部分为 0
+
+                # 计算前后半部分的调制结果
+                modulated_part1 = gate1.unsqueeze(1) * hidden_states + input_tensor
+                modulated_part2 = gate2.unsqueeze(1) * hidden_states + input_tensor
+
+                # 合并结果（Mask 加权）
+                hidden_states = mask * modulated_part1 + (1 - mask) * modulated_part2
+            else:  # 如果 gate 不是 list，则全局应用
+                hidden_states = gate.unsqueeze(1) * hidden_states + input_tensor
         else:
             hidden_states = hidden_states + input_tensor
         return hidden_states
@@ -379,7 +442,10 @@ class AGFMAttentionDPLM2(nn.Module):
 
         # TODO: 为seq struct 设计各自的 msa (self.self / self.output)
         if shift_msa is not None:
-            hidden_states_ln = modulate(hidden_states_ln, shift_msa, scale_msa)
+            if isinstance(shift_msa, list):
+                hidden_states_ln = modulate_diff(hidden_states_ln, shift_msa, scale_msa)
+            else:
+                hidden_states_ln = modulate(hidden_states_ln, shift_msa, scale_msa)
 
         self_outputs = self.self(
             hidden_states_ln,
@@ -471,10 +537,21 @@ class AGFMLayerDPLM2(nn.Module):
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
-        self.adaLN_modulation = nn.Sequential(
+        if not config.use_diff_modulation:
+            self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(config.hidden_size, 6 * config.hidden_size, bias=True),  # use gate_msa
         )
+        else:
+            self.adaLN_modulation = nn.Sequential(
+            nn.SiLU(),
+            nn.Linear(config.hidden_size, 12 * config.hidden_size, bias=True),  # use gate_msa
+        )
+
+        if hasattr(config, 'use_diff_modulation'):
+            self.use_diff_modulation = config.use_diff_modulation
+        else:
+            self.use_diff_modulation = False
 
 
     def forward(
@@ -491,7 +568,17 @@ class AGFMLayerDPLM2(nn.Module):
     ):
 
         if cond_input is not None:
-            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(cond_input).chunk(6, dim=1)
+            if self.use_diff_modulation:
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input).chunk(12, dim=1)
+
+                shift_msa = [shift_msa, shift_msa_seq]
+                scale_msa = [scale_msa, scale_msa_seq]
+                gate_msa = [gate_msa, gate_msa_seq]
+                shift_mlp = [shift_mlp, shift_mlp_seq]
+                scale_mlp = [scale_mlp, scale_mlp_seq]
+                gate_mlp = [gate_mlp, gate_mlp_seq]
+            else:
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(cond_input).chunk(6, dim=1)
 
         else:
             shift_msa = scale_msa = shift_mlp = scale_mlp = gate_msa = gate_mlp = None
@@ -515,7 +602,10 @@ class AGFMLayerDPLM2(nn.Module):
         attention_output_ln = self.LayerNorm(attention_output)
         if cond_input is not None:
             # TODO: use cond different from seq struct
-            attention_output_ln = modulate(attention_output_ln, shift_mlp, scale_mlp)
+            if self.use_diff_modulation:
+                attention_output_ln = modulate_diff(attention_output_ln, shift_mlp, scale_mlp)
+            else:
+                attention_output_ln = modulate(attention_output_ln, shift_mlp, scale_mlp)
             intermediate_output = self.intermediate(attention_output_ln)
             layer_output = self.output(intermediate_output, attention_output, gate_mlp)
         else:
@@ -864,18 +954,30 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                 return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
 
             if self.use_go and go_class is not None:
-                go_class = prepare_class(go_class, self.go_embedder.num_classes)
+                if hasattr(self.go_embedder, 'original_module'):
+                    num_classes = self.go_embedder.original_module.num_classes
+                else:
+                    num_classes = self.go_embedder.num_classes
+                go_class = prepare_class(go_class, num_classes)
                 anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
                                                 self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
 
             if self.use_ipr and ipr_class is not None:
-                ipr_class = prepare_class(ipr_class, self.ipr_embedder.num_classes)
+                if hasattr(self.ipr_embedder, 'original_module'):
+                    num_classes = self.ipr_embedder.original_module.num_classes
+                else:
+                    num_classes = self.ipr_embedder.num_classes
+                ipr_class = prepare_class(ipr_class, num_classes)
                 ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
                                                self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
                 anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
 
             if self.use_ec and ec_class is not None:
-                ec_class = prepare_class(ec_class, self.ec_embedder.num_classes)
+                if hasattr(self.ec_embedder, 'original_module'):
+                    num_classes = self.ec_embedder.original_module.num_classes
+                else:
+                    num_classes = self.ec_embedder.num_classes
+                ec_class = prepare_class(ec_class, num_classes)
                 ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
                                               self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
                 anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed

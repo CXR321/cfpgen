@@ -122,6 +122,11 @@ def get_net(cfg):
             config.tie_word_embeddings = False
             config.vocab_size = 8229
 
+            if hasattr(cfg, 'use_diff_modulation'):
+                config.use_diff_modulation = cfg.use_diff_modulation
+            else:
+                config.use_diff_modulation = False
+
             # print(f"config: {config}")
             if 'cond' in cfg:
                 config.update(cfg.cond)
@@ -173,7 +178,11 @@ def get_net(cfg):
     if cfg.lora.lora:
         # QKVO, MLP
         lora_target_module = cfg.lora.lora_target_module
-        modules_to_save = cfg.lora.modules_to_save.split(',')
+        modules_to_save = cfg.lora.modules_to_save.split(',')+ [
+            'esm.encoder.go_embedder',
+            'esm.encoder.ipr_embedder',
+            'esm.encoder.layer.*.adaLN_modulation'
+        ]
 
         peft_config = LoraConfig(
             task_type=TaskType.SEQ_2_SEQ_LM, 

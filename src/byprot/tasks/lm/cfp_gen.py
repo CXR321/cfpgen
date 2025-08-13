@@ -413,6 +413,10 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
                     new_names.append(key_core)
                     new_params.append(param)
 
+            # print(f"pretrained_names: {pretrained_names}")
+            # print(f"new_names: {new_names}")
+            # exit()
+
             optimizer = get_optimizer(
                 self.hparams.optimizer,
                 [
