@@ -71,6 +71,7 @@ model:
     exp_path: airkingbd/struct_tokenizer
 
   use_diff_modulation: true
+  use_func_cross_attn: true
 
 
 task:

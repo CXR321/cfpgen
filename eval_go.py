@@ -37,7 +37,7 @@ logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
     help='Test data set name')
 def main(data_root, ont, test_predictions):
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ""))
     obo_path = os.path.join(base_dir, 'data', 'go.obo')
     ontology = Ontology(obo_path, with_rels=True)
     def load_pkl_file(file_path):
@@ -80,8 +80,16 @@ def main(data_root, ont, test_predictions):
     else:
         gts = {ele['uniprot_id']:set(ele['go_numbers']['F']) for ele in test_data}
 
-    gt_list = [gts[uid] for uid in preds.keys()]
+    # gt_list = [gts[uid] for uid in preds.keys()]
+    # gt_list = [gts[uid] for uid in preds.keys() if uid in gts]
     # gt_list = list(gts.values())  # for uncond
+
+    print(f"len(preds), len(gts): {len(preds)}, {len(gts)}")
+    common_uids = [uid for uid in preds.keys() if uid in gts]
+    gt_list = [gts[uid] for uid in common_uids]
+    pred_list = [preds[uid] for uid in common_uids]    
+
+    print(f"after filtering, len(common_uids), len(gt_list), len(pred_list): {len(common_uids)}, {len(gt_list)}, {len(pred_list)}")
 
     for i, this_gt_go in enumerate(gt_list):
         new_this_go = []
@@ -93,7 +101,7 @@ def main(data_root, ont, test_predictions):
     for go_set in gt_list:
         unique_go_gt.update(go_set)
 
-    pred_list = list(preds.values())
+    # pred_list = list(preds.values())
 
     unique_go_pred = set()
     for go_set in pred_list:
@@ -105,6 +113,9 @@ def main(data_root, ont, test_predictions):
         pred_list[i] = set([ele for ele in this_gt_go if ele in unique_go])
     for i, this_gt_go in enumerate(gt_list):
         gt_list[i] = set([ele for ele in this_gt_go if ele in unique_go])
+
+    # print(gt_list[0])
+    # print(pred_list[0])
 
     mlb = MultiLabelBinarizer()
     all_go_terms = gt_list + pred_list

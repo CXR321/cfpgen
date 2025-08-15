@@ -28,11 +28,13 @@ with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "rb") 
 # length = [len(item["sequence"]) for item in train_data_expanded]
 # length = sorted(length)
 
-valid_length = [len(item["aa_seq"]) for item in valid_data_expanded]
-valid_length = sorted(valid_length)
+# valid_length = [len(item["aa_seq"]) for item in valid_data_expanded]
+# valid_length = sorted(valid_length)
 
 # print(length)
-print(valid_length)
+# print(valid_length)
+
+print(train_data_expanded[1])
 
 exit()
 

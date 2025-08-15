@@ -548,10 +548,23 @@ class AGFMLayerDPLM2(nn.Module):
             nn.Linear(config.hidden_size, 12 * config.hidden_size, bias=True),  # use gate_msa
         )
 
-        if hasattr(config, 'use_diff_modulation'):
-            self.use_diff_modulation = config.use_diff_modulation
-        else:
-            self.use_diff_modulation = False
+        self.use_diff_modulation = getattr(config, "use_diff_modulation", False)
+        self.use_func_cross_attn = getattr(config, "use_func_cross_attn", False)
+
+        # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
+
+        if self.use_func_cross_attn:
+
+            # === 新增：功能 cross-attn 模块（F -> tokens）===
+            self.func_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=True)
+            self.cross_attn_ln = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+            self.cross_attn = nn.MultiheadAttention(
+                embed_dim=config.hidden_size,
+                num_heads=config.num_attention_heads,
+                batch_first=True,
+            )
+            # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
+            self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
 
 
     def forward(
@@ -597,6 +610,34 @@ class AGFMLayerDPLM2(nn.Module):
         )
         attention_output = self_attention_outputs[0]
         outputs = self_attention_outputs[1:]
+
+
+        if self.use_func_cross_attn:
+            # ====== （新增）功能 cross-attention：tokens(Q) ← F(K,V) ======
+            # 作用于 AA 与 Struct 全体 token；若 use_diff_modulation=True，用 type_ids 做门控区分
+            if cond_input is not None:
+                # cond_input: [B, D] or [B, 1, D]
+                if cond_input.dim() == 2:
+                    func_tok = cond_input.unsqueeze(1)     # [B, 1, D]
+                else:
+                    func_tok = cond_input                  # 允许 [B, 1, D]
+
+                func_tok = self.func_proj(func_tok)        # 线性投影到 d_model
+
+                # 预归一化 + CrossAttn
+                q = self.cross_attn_ln(attention_output)           # [B, L, D]
+                cross_out, cross_w = self.cross_attn(
+                    query=q, key=func_tok, value=func_tok,
+                    need_weights=output_attentions,
+                    attn_mask=None, key_padding_mask=None
+                )  # cross_out: [B, L, D]
+
+                # 残差 + 门控（AA/Struct 差异化）
+                attention_output = attention_output + self.cross_res_scale * cross_out
+
+                if output_attentions:
+                    outputs = (cross_w,) + outputs  # 可选：把功能 cross-attn 的权重也返回，便于可视化
+            # else: 不传 cond_input 就不做功能 cross-attn
 
         # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
         attention_output_ln = self.LayerNorm(attention_output)

@@ -86,6 +86,7 @@ class CFPGENConfig_DPLM2:
     cond: CondConfig = field(default_factory=CondConfig)
 
     use_diff_modulation: bool = field(default=False)
+    use_func_cross_attn: bool = field(default=False)
 
 
 @register_model('cfp_gen')

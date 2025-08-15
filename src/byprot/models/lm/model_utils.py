@@ -122,10 +122,8 @@ def get_net(cfg):
             config.tie_word_embeddings = False
             config.vocab_size = 8229
 
-            if hasattr(cfg, 'use_diff_modulation'):
-                config.use_diff_modulation = cfg.use_diff_modulation
-            else:
-                config.use_diff_modulation = False
+            config.use_diff_modulation = getattr(cfg, "use_diff_modulation", False)
+            config.use_func_cross_attn = getattr(cfg, "use_func_cross_attn", False)
 
             # print(f"config: {config}")
             if 'cond' in cfg:
