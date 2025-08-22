@@ -163,6 +163,8 @@ run/logs
 *.tsv
 *.pkl
 *.gz
+*.png
+*.csv
 
 deepgo2/
 temp_checkpoints/

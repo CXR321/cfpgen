@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=2,5,0,6
+export CUDA_VISIBLE_DEVICES=3,5,0,6
 # export CUDA_VISIBLE_DEVICES=7
 
 # max_tokens=8192
@@ -11,7 +11,8 @@ accumulate_grad_batches=4
 exp=cfpgen/cfpgen_650m_stage1_dplm2
 
 # model_name=cfpgen_general_dataset_stage1
-model_name=cfpgen_general_dataset_stage1_dplm2_diff-modulation_func-cross-attn_wandb
+# model_name=cfpgen_general_dataset_stage1_dplm2_diff-modulation_func-cross-attn_wandb
+model_name=cfpgen_general_dataset_stage1_dplm2_diff-modulation_wandb
 
 python train.py \
     experiment=${exp} \

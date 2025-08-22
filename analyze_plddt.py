@@ -39,6 +39,7 @@ def calculate_stats(folder_path):
 
 # 使用示例
 folder_path = './generation-results-dplm2/esmfold_pdb/'  # 替换为你的文件夹路径
+# folder_path = './generation-results-cfpgen_650m/esmfold_pdb/'
 stats = calculate_stats(folder_path)
 
 if stats:

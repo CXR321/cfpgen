@@ -196,6 +196,8 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
         model = model.eval().cuda(gpu_idx)
         tokenizer = model.tokenizer
 
+        # print("model.net")
+
         set_seed(config.get('seed', 42) + gpu_idx)
 
         with open(part_fasta_filename, 'a') as fp_save:

@@ -6,14 +6,15 @@ run_name: go-ipr-500iter-repeat_cut-debug
 
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/last.ckpt
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2/checkpoints/best.ckpt
-ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_debug/checkpoints/step_89999.0-loss_0.72.ckpt
+# ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_debug/checkpoints/step_89999.0-loss_0.72.ckpt
+ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_diff-modulation_func-cross-attn_wandb/checkpoints/step_29999.0-loss_0.71.ckpt
 # ckpt_path: temp_checkpoints/checkpoints/last.ckpt
 # ckpt_path: pretrained/cfpgen_650m/checkpoints/last.ckpt
 
 # input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_expanded.pkl
 input_data: data-bin/uniprotKB/cfpgen_general_dataset/test.pkl
 
-saveto: generation-results-dplm2/
+saveto: generation-results-dplm2-diff-cross/
 # saveto: generation-results-cfpgen_650m/
 
 num_seqs: 1
@@ -27,6 +28,10 @@ use_ec: false
 use_seq_motif: false
 motif_min: 10
 motif_max: 30
+
+use_diff_modulation: true
+use_func_cross_attn: true
+
 
 sampling_strategy: annealing@2.0:1.0
 max_iter: 500 # 100 ori

@@ -117,7 +117,7 @@ def train(config: DictConfig) -> Optional[float]:
     log.info(f"Instantiating trainer <{config.trainer._target_}>")
 
     # logger is none
-    logger = [WandbLogger(log_model="all", project="cfpgen_dplm2")]
+    logger = [WandbLogger(log_model=False, project="cfpgen_dplm2")]
 
     trainer: Trainer = hydra.utils.instantiate(
         config.trainer, callbacks=callbacks, logger=logger, _convert_="partial"

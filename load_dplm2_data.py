@@ -34,7 +34,47 @@ with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "rb") 
 # print(length)
 # print(valid_length)
 
-print(train_data_expanded[1])
+# print(train_data_expanded[1])
+
+def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
+    """在 aa_seq 中查找 motif_segment 的准确位置"""
+    index = aa_seq.find(motif_segment)
+    if index == -1:
+        print(f"❌ Motif segment {motif_segment} not found in aa_seq!")
+        print(f"aa_seq: {aa_seq}")
+        print(f"seq: {seq}")
+        print(f"name: {name}")
+
+        # raise ValueError("❌ Motif segment not found in aa_seq!")
+        return None, None
+    return index, index + len(motif_segment) - 1  # 返回 start, end (0-based)
+
+for data in train_data_expanded:
+
+    aa_seq = data['aa_seq']
+    struct_seq = data['struct_seq'].split(',')
+    try:
+        motif_info = data['motif'][0]  # 假设只有一个 motif
+        motif_segment = motif_info['motif_segment']
+    except:
+        print(data['uniprot_id'], "has no motif info")
+        print(data['motif'])
+        continue
+
+    # 重新计算 motif 在 aa_seq 中的位置
+    start, end = find_motif_in_aa_seq(aa_seq, motif_segment, data['sequence'], data['uniprot_id'])
+
+    if start is None:
+        continue
+
+    # 提取 struct_seq 对应位置的 tokens
+    struct_tokens = struct_seq[start : end + 1]  # Python 切片是 [start, end+1)
+
+    # print(f"✅ Motif segment found at aa_seq positions: {start+1}-{end+1} (1-based)")
+    # print(f"Extracted {len(struct_tokens)} struct tokens:")
+    # print(struct_tokens[:10], "...", struct_tokens[-10:])  # 显示前10和后10个 token
+    terms = [term['go_term'] for term in data['motif']]
+    print(f"motif_num: {terms} {motif_info['go_term']}: {struct_tokens} {data['uniprot_id']} {aa_seq[start:end+1]}")
 
 exit()
 
