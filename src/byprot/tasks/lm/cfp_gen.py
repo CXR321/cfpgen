@@ -387,10 +387,12 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             # pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
             # pretrained_state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
 
+            pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
+
             # WARNIG: 强行换成了DPLM2
             pretrained_net = (
                 MultimodalDiffusionProteinLanguageModel.from_pretrained(
-                    "airkingbd/dplm2_650m"
+                    pretrained_model_name_or_path
                 ).net
             )
             pretrained_state_dict = pretrained_net.state_dict()
@@ -413,14 +415,15 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
                     new_names.append(key_core)
                     new_params.append(param)
 
-            # print(f"pretrained_names: {pretrained_names}")
-            # print(f"new_names: {new_names}")
+            print(f"pretrained_names: {len(pretrained_names)}")
+            print(f"new_names: {len(new_names)}")
             # exit()
 
             optimizer = get_optimizer(
                 self.hparams.optimizer,
                 [
-                    {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
+                    # 跳过预训练模型的参数
+                    # {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
                     {"params": new_params, "lr": self.hparams.optimizer.lr}
                 ]
             )

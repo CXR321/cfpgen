@@ -550,6 +550,7 @@ class AGFMLayerDPLM2(nn.Module):
 
         self.use_diff_modulation = getattr(config, "use_diff_modulation", False)
         self.use_func_cross_attn = getattr(config, "use_func_cross_attn", False)
+        self.use_motif_struct_emb = getattr(config, "use_motif_struct_emb", False)
 
         # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
 
@@ -566,6 +567,19 @@ class AGFMLayerDPLM2(nn.Module):
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
             self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
 
+        if self.use_motif_struct_emb:
+
+            # === 新增：功能 motif-cross-attn 模块（F -> tokens）===
+            self.motif_proj = nn.Linear(1280, config.hidden_size, bias=True)
+            self.motif_cross_attn_ln = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+            self.motif_cross_attn = nn.MultiheadAttention(
+                embed_dim=config.hidden_size,
+                num_heads=config.num_attention_heads,
+                batch_first=True,
+            )
+            # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
+            self.motif_cross_res_scale = nn.Parameter(torch.tensor(1.0))
+
 
     def forward(
             self,
@@ -578,6 +592,7 @@ class AGFMLayerDPLM2(nn.Module):
             output_attentions=False,
             cond_input=None,
             type_ids=None,
+            motif_struct_emb=None,
     ):
 
         if cond_input is not None:
@@ -611,6 +626,8 @@ class AGFMLayerDPLM2(nn.Module):
         attention_output = self_attention_outputs[0]
         outputs = self_attention_outputs[1:]
 
+        cross_out = torch.zeros_like(attention_output)
+        motif_cross_out = torch.zeros_like(attention_output)
 
         if self.use_func_cross_attn:
             # ====== （新增）功能 cross-attention：tokens(Q) ← F(K,V) ======
@@ -633,14 +650,52 @@ class AGFMLayerDPLM2(nn.Module):
                 )  # cross_out: [B, L, D]
 
                 # 残差 + 门控（AA/Struct 差异化）
-                attention_output = attention_output + self.cross_res_scale * cross_out
+                # attention_output = attention_output + self.cross_res_scale * cross_out
 
                 if output_attentions:
                     outputs = (cross_w,) + outputs  # 可选：把功能 cross-attn 的权重也返回，便于可视化
             # else: 不传 cond_input 就不做功能 cross-attn
 
         # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
+        # attention_output_ln = self.LayerNorm(attention_output)
+
+        if self.use_motif_struct_emb:
+            # print(motif_struct_emb)
+            # exit()
+            # ====== （新增）功能 cross-attention：tokens(Q) ← F(K,V) ======
+            # 作用于 AA 与 Struct 全体 token；若 use_diff_modulation=True，用 type_ids 做门控区分
+            if motif_struct_emb is not None:
+                # cond_input: [B, D] or [B, 1, D]
+                if motif_struct_emb.dim() == 2:
+                    motif_tok = motif_struct_emb.unsqueeze(1)     # [B, 1, D]
+                else:
+                    motif_tok = motif_struct_emb                  # 允许 [B, 1, D]
+
+                motif_tok = self.motif_proj(motif_tok)        # 线性投影到 d_model
+
+                # 预归一化 + CrossAttn
+                q = self.motif_cross_attn_ln(attention_output)           # [B, L, D]
+                motif_cross_out, motif_cross_w = self.motif_cross_attn(
+                    query=q, key=motif_tok, value=motif_tok,
+                    need_weights=output_attentions,
+                    attn_mask=None, key_padding_mask=None
+                )  # cross_out: [B, L, D]
+
+                # 残差 + 门控（AA/Struct 差异化）
+                # attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out
+
+                if output_attentions:
+                    outputs = (motif_cross_w,) + outputs  # 可选：把功能 cross-attn 的权重也返回，便于可视化
+            # else: 不传 cond_input 就不做功能 cross-attn
+        
+        n_half = attention_output.size(1) // 2
+        struct_mask = torch.zeros_like(attention_output)
+        struct_mask[:, :n_half, :] = 1  # 前半部分为1，后半部分为0
+        attention_output = attention_output + self.cross_res_scale * cross_out + self.motif_cross_res_scale * motif_cross_out * struct_mask
+
+        # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
         attention_output_ln = self.LayerNorm(attention_output)
+
         if cond_input is not None:
             # TODO: use cond different from seq struct
             if self.use_diff_modulation:
@@ -979,12 +1034,17 @@ class CFPGenEncoderDPLM2(EsmEncoder):
 
         anno_tag = kwargs.get('anno_tag')
         anno_embed = None
+        motif_struct_emb = None
 
         if anno_tag is not None:
 
             go_class = anno_tag.get('go')
             ipr_class = anno_tag.get('ipr')
             ec_class = anno_tag.get('ec')
+
+            motif_struct_emb = anno_tag.get('motif_struct_emb')
+            # print(motif_struct_emb)
+            # exit()
 
             seq_num = hidden_states.size(0)
 
@@ -1074,6 +1134,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                         past_key_value,
                         output_attentions,
                         type_ids,
+                        motif_struct_emb,
                     )
                 else:
                     layer_outputs = layer_module(
@@ -1086,6 +1147,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                         output_attentions,
                         anno_embed,
                         type_ids,
+                        motif_struct_emb,
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1564,7 +1626,7 @@ def sample_from_categorical(logits=None, temperature=1.0):
 class EsmForCFPGEN_DPLM2(EsmForMaskedLM):
     def __init__(self, config, dropout=0.1):
         print(f"Loading model from {config._name_or_path}")
-        tokenizer = DPLM2Tokenizer.from_pretrained(config._name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(config._name_or_path)
         config.hidden_dropout_prob = dropout
         
         EsmPreTrainedModel.__init__(self, config)
@@ -1575,7 +1637,7 @@ class EsmForCFPGEN_DPLM2(EsmForMaskedLM):
         
         # self.mask_id = tokenizer.mask_token_id
         # self.pad_id = tokenizer.pad_token_id
-        self.pad_id = tokenizer._convert_token_to_id('<pad>')
+        self.pad_id = tokenizer.pad_token_id
         self.config.pad_token_id = self.pad_id
         # self.bos_id = tokenizer.cls_token_id
         # self.eos_id = tokenizer.eos_token_id

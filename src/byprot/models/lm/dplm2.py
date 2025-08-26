@@ -161,6 +161,9 @@ class MultimodalDiffusionProteinLanguageModel(nn.Module):
         else:
             # Load DPLM-2 model checkpoint from huggingface
             dplm_type = AutoConfig.from_pretrained(net_name).dplm_type
+            dplm_type = "dplm2_esm"
+            # print(dplm_type)
+            # exit()
             net_class = get_net_class(dplm_type)
             net = net_class.from_pretrained(net_name, **net_override)
             return cls(cfg=cfg_override, net=net)

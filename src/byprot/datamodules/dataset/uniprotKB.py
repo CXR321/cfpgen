@@ -14,6 +14,7 @@ from torch.utils.data import BatchSampler, Dataset, Sampler, DataLoader
 from byprot import utils
 
 from byprot.datamodules.dataset.tokenized_protein import DPLM2Tokenizer
+from torch.nn.utils.rnn import pad_sequence
 
 log = utils.get_logger(__name__)
 
@@ -240,7 +241,8 @@ class UniProtKB_DPLM2_Dataset(Dataset):
     ):
         self.data_dir = data_dir
         self.split = split
-        file_path = os.path.join(self.data_dir.data_dir, self.split+'_expanded.pkl')
+        # file_path = os.path.join(self.data_dir.data_dir, self.split+'_expanded.pkl')
+        file_path = os.path.join(self.data_dir.data_dir, self.split+'_data_motif_emb.pkl')
         assert os.path.isfile(file_path)
         with open(file_path, 'rb') as f:
             self.indices = pickle.load(f)
@@ -268,6 +270,8 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         aatype_tokens = idx["aa_seq"]
         struct_tokens = idx["struct_seq"]
 
+        motif_mask = idx.get('motif_mask')
+        motid_struct_emb = idx.get('motif_struct_emb')
 
         # all is string
         struct_tokens = struct_tokens.split(",")
@@ -299,6 +303,7 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         aatype_tokens = aatype_tokens[start:stop]
         struct_tokens = struct_tokens[start:stop]
         struct_tokens = "".join(struct_tokens) # convert to str example: [1234,1234] -> "12341234"
+        motif_mask = motif_mask[start:stop]
 
         struct_tokens = (
             self.tokenizer.struct_cls_token
@@ -311,10 +316,20 @@ class UniProtKB_DPLM2_Dataset(Dataset):
             + self.tokenizer.aa_eos_token
         )
 
+        motif_mask = torch.cat(
+            (
+                torch.tensor([False]),  # 头部的 False
+                motif_mask,
+                torch.tensor([False])   # 尾部的 False
+            )
+        )
+
+
+
         # Now consensus not add cls and eos but struct and aa type tokens add
         # assert (len(aatype_tokens)-2*len(self.tokenizer.aa_cls_token)) == ((len(struct_tokens)-2*len(self.tokenizer.struct_cls_token))/4) == (len(consensus))
 
-        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens
+        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motid_struct_emb
 
 
 class UniProtKBDatasetForTesting(Dataset):
@@ -539,6 +554,11 @@ class DPLM2Collater(object):
             "attention_mask": batch_aatype["attention_mask"].bool(),
         }
 
+        motif_mask_list = [ele[7] for ele in input_data]
+        motif_struct_emb_list = [ele[8] for ele in input_data]
+
+        motif_mask = pad_sequence(motif_mask_list, batch_first=True, padding_value=False)
+
         batch = {
             "struct_tokens": batch_struct,
             "aatype_tokens": batch_aatype,
@@ -549,6 +569,9 @@ class DPLM2Collater(object):
             batch["pdb_name"] = pdb_name_list
 
         batch.update(cfpgen_batch)
+
+        batch['motif_mask'] = motif_mask
+        batch['motif_struct_emb'] = torch.stack(motif_struct_emb_list).mean(dim=1)
 
         # assert len(batch["struct_tokens"]["targets"][0]) == len(batch["aatype_tokens"]["targets"][0]) == len(batch["input_ids"]) == len(batch["input_mask"][0]) == len(batch["targets"][0])
 

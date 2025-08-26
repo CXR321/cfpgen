@@ -87,6 +87,8 @@ class CFPGENConfig_DPLM2:
 
     use_diff_modulation: bool = field(default=False)
     use_func_cross_attn: bool = field(default=False)
+    use_diff_ce: bool = field(default=False)
+    use_motif_struct_emb: bool = field(default=False)
 
 
 @register_model('cfp_gen')
@@ -731,6 +733,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         # self.tokenizer = self.net.tokenizer
         # print("init cdplm2")
 
+        self.use_diff_ce = getattr(self.cfg, 'use_diff_ce', False)
+        self.use_motif_struct_emb = getattr(self.cfg, 'use_motif_struct_emb', False)
+
         
         if self.cfg.gradient_ckpt:
             self.net.supports_gradient_checkpointing = True
@@ -1148,7 +1153,13 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             else:
                 masked_target = self.get_motif_middle(target, batch['motif_start_end'], motif_len_min=self.cfg.cond.motif_min_len, motif_len_max=self.cfg.cond.motif_max_len)
 
-        inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'])
+        motif_struct_emb = None
+        if self.use_motif_struct_emb:
+            # print(f"use motif_struct_emb")
+            motif_struct_emb = batch['motif_struct_emb']
+            # print(motif_struct_emb)
+
+        inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'], motif_struct_emb=motif_struct_emb)
 
         model_outputs = self.forward(
                 input_ids=inputs,
@@ -1172,6 +1183,34 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             "constant": num_timesteps * torch.ones_like(aatype_noised["t"]),
         }[weighting][:, None].float() / num_timesteps
         aatype_weight = aatype_weight.expand(aatype_target.size())
+
+        if self.use_diff_ce:
+            # print("in diff ce ")
+            struct_t = struct_noised["t"].float()
+            aatype_t = aatype_noised["t"].float()
+            
+            motif_mask = batch['motif_mask']
+
+            # 结构权重计算（基于struct_t）
+            struct_time_factor = (struct_t - 1) / (num_timesteps)  # 归一化到[0,1]
+            struct_motif_weight_coeff = 1.0 + 0.15 * torch.exp(-2.5 * (1 - struct_time_factor))
+            struct_motif_weight_coeff = struct_motif_weight_coeff[:, None].expand(-1, motif_mask.shape[1])
+
+            # print(f"motif_mask: {motif_mask.shape}, struct_motif_weight_coeff: {struct_motif_weight_coeff.shape}, struct_weight: {struct_weight.shape}")
+            # assert motif_mask.shape == struct_motif_weight_coeff.shape == struct_weight.shape
+
+            # print(f"sum motif_mask: {motif_mask.sum()}, sum struct_motif_weight_coeff: {struct_motif_weight_coeff.sum()}, sum struct_weight: {struct_weight.sum()}")
+            # 应用结构motif权重
+            struct_weight_coeff = torch.where(~motif_mask, struct_motif_weight_coeff, 1.0)
+            struct_weight = struct_weight * struct_weight_coeff
+
+            # 氨基酸类型权重计算（基于aatype_t）
+            aatype_time_factor = (aatype_t - 1) / (num_timesteps)  # 归一化到[0,1]
+            aatype_motif_weight_coeff = 1.0 + 0.15 * torch.exp(-2.5 * (1 - aatype_time_factor))
+            aatype_motif_weight_coeff = aatype_motif_weight_coeff[:, None].expand(-1, motif_mask.shape[1])
+            # 应用氨基酸类型motif权重
+            aatype_weight_coeff = torch.where(~motif_mask, aatype_motif_weight_coeff, 1.0)
+            aatype_weight = aatype_weight * aatype_weight_coeff
 
         return (
             {

@@ -12,8 +12,8 @@ defaults:
 # this allows you to overwrite only specified parameters
 
 # name of the run determines folder name in logs
-project: "CFPGen_650m_stage1_dplm2"
-name: "cfpgen_general_dataset_stage1_dplm2"
+project: "CFPGen_650m_stage1_dplm2_3b"
+name: "cfpgen_general_dataset_stage1_dplm2_3b"
 
 datamodule:
   max_tokens: 8192 # batch size
@@ -56,24 +56,23 @@ model:
     modules_to_save: lm_head,esm.embeddings
   net:
     arch_type: func_esm_dplm2
-    name: airkingbd/dplm_650m
+    name: airkingbd/dplm_3b
     dropout: 0.1
     pretrain: true
-    pretrained_model_name_or_path: airkingbd/dplm2_650m  # stage 1
+    pretrained_model_name_or_path: airkingbd/dplm2_3b # stage 1
 
   self_mixup:
     enable: false
     with_original_loss: false
   tokenizer:
-    vocab_file: airkingbd/dplm2_650m
+    vocab_file: airkingbd/dplm2_3b
     vocab_size: 8229 # 33 + 8192 + 4
   struct_tokenizer:
     exp_path: airkingbd/struct_tokenizer
 
   use_diff_modulation: true
-  use_func_cross_attn: true
-  use_diff_ce: true
-  use_motif_struct_emb: true
+  use_func_cross_attn: false
+  use_diff_ce: false
 
 
 task:

@@ -130,8 +130,10 @@ def instantiate_from_config(cfg: OmegaConf, group=None, **override_kwargs):
         # print(f"target_cls: {target}")
         target_cls = get_obj_from_str(target)
         try:
+            print(f"try target_cls: {target}")
             return target_cls(**cfg, **override_kwargs)
         except:
+            print(f"fail target_cls: {target}")
             cfg = merge_config(cfg, override_kwargs)
             return target_cls(cfg)
 

@@ -115,15 +115,16 @@ def get_net(cfg):
                 config.update(cfg.cond)
             net = EsmForCFPGEN(config, dropout=cfg.net.dropout)
         elif cfg.net.arch_type == 'func_esm_dplm2':
-            # print(f"net name: {cfg.net.name}")
+            print(f"net name: {cfg.net.name}")
             config = AutoConfig.from_pretrained(f'{cfg.net.name}')
-
+            # print(f"net complete: {net}")
             config.hidden_dropout_prob = cfg.net.dropout
             config.tie_word_embeddings = False
             config.vocab_size = 8229
 
             config.use_diff_modulation = getattr(cfg, "use_diff_modulation", False)
             config.use_func_cross_attn = getattr(cfg, "use_func_cross_attn", False)
+            config.use_motif_struct_emb = getattr(cfg, "use_motif_struct_emb", False)
 
             # print(f"config: {config}")
             if 'cond' in cfg:
@@ -131,9 +132,10 @@ def get_net(cfg):
 
             pretrained_net = (
                 MultimodalDiffusionProteinLanguageModel.from_pretrained(
-                    "airkingbd/dplm2_650m"
+                    cfg.net.pretrained_model_name_or_path
                 ).net
             )
+            # print(f"net complete: {net}")
 
             net = EsmForCFPGEN_DPLM2(config, dropout=cfg.net.dropout)
             # print(f"net complete: {net}")
