@@ -1,14 +1,16 @@
 import os
 import numpy as np
 from .similarity import mmd
-from .spectrum import spectrum_map
+from .spectrum import spectrum_map,esm_embedding_map
 from .util import GoDag
 import torch
 import pickle
+import esm
+from functools import partial
 
 PATH = os.path.dirname(os.path.realpath(__file__))
 
-def mrr(seq1=None, labels1=None, seq2=None, labels2=None, emb1=None, emb2=None, n=1300, embedding='spectrum', ignore_parents=False, ignore_childs=False, godag=PATH+'/../data/godag.obo', return_ranks=False, terms=None, warning=False, **kwargs):
+def mrr(seq1=None, labels1=None, seq2=None, labels2=None, emb1=None, emb2=None, n=1300, embedding='esm', ignore_parents=False, ignore_childs=False, godag=PATH+'/../data/godag.obo', return_ranks=False, terms=None, warning=False, **kwargs):
     '''
     Calculates MRR between two sets of sequences and associated labels. <seq2> and <labels2> is the reference set. Optionally takes embeddings of sequences if these have been precomputed for efficiency. <n> is the size of each label bucket. <ignore_parents> and <ignore_childs> are flags to ignore off-target effects in related terms in the label hierarchy.
     '''
@@ -22,11 +24,21 @@ def mrr(seq1=None, labels1=None, seq2=None, labels2=None, emb1=None, emb2=None, 
         raise NotImplementedError
     if embedding == 'unirep':
         raise NotImplementedError
+    if embedding == 'esm':
+        DEVICE = "cuda:0"
+        model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        model = model.to(DEVICE)
+        model.eval()
+        embed = partial(esm_embedding_map, 
+                   model=model, 
+                   alphabet=alphabet, 
+                   layer=33, 
+                   mode='cls')
 
     if not seq1 is None and emb1 is None:
-        emb1 = embed(seq1, **kwargs)
+        emb1 = embed(sequences=seq1, **kwargs)
     if not seq2 is None and emb2 is None:
-        emb2 = embed(seq2, **kwargs)
+        emb2 = embed(sequences=seq2, **kwargs)
 
     def group(embs, labels):
         groups = {term:[] for term in terms}

@@ -1,5 +1,5 @@
-export CUDA_VISIBLE_DEVICES=3,7,0,2
-# export CUDA_VISIBLE_DEVICES=7
+# export CUDA_VISIBLE_DEVICES=3,7,0,2
+export CUDA_VISIBLE_DEVICES=5
 
 # max_tokens=8192
 # max_tokens=4096

@@ -93,6 +93,11 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
             motif_start_end = [0, 0]
         length = len(sequence)
 
+    motif_struct_emb = None
+    if config.get('use_motif_struct_emb', False):
+        motif_struct_emb = sample['motif_struct_emb']
+        if motif_struct_emb is None:
+            raise ValueError("Motif structure embedding is not provided.")
     # seq = ['<mask>'] * length
 
     # seq = [''.join(seq)]
@@ -164,6 +169,9 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
 
     if config.get('use_seq_motif', False):
         out_batch['seq_cond'] = seq_cond
+
+    if config.get('use_motif_struct_emb', False):
+        out_batch['motif_struct_emb'] = torch.stack([motif_struct_emb for _ in range(config['num_seqs'])])
 
     return utils.recursive_to(out_batch, device)
 

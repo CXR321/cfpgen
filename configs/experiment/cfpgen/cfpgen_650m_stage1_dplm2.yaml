@@ -72,7 +72,7 @@ model:
 
   use_diff_modulation: true
   use_func_cross_attn: true
-  use_diff_ce: true
+  use_diff_ce: false
   use_motif_struct_emb: true
 
 
@@ -115,7 +115,7 @@ train:
 
 trainer:
   min_epochs: 10
-  max_epochs: 10000
+  max_epochs: 40
   gradient_clip_val: 0.0
   num_sanity_val_steps: 0
   reload_dataloaders_every_n_epochs: 1

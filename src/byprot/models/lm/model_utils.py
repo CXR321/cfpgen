@@ -181,7 +181,8 @@ def get_net(cfg):
         modules_to_save = cfg.lora.modules_to_save.split(',')+ [
             'esm.encoder.go_embedder',
             'esm.encoder.ipr_embedder',
-            'esm.encoder.layer.*.adaLN_modulation'
+            'esm.encoder.layer.*.adaLN_modulation.1.*'
+            
         ]
 
         peft_config = LoraConfig(
@@ -191,7 +192,40 @@ def get_net(cfg):
             inference_mode=False, r=cfg.lora.lora_rank, lora_alpha=32, lora_dropout=cfg.lora.lora_dropout
         )
         net = get_peft_model(net, peft_config)
-            
+
+    # for param in net.parameters():
+    #     param.requires_grad = False
+    
+    # # 定义要训练的部分
+    # modules_to_save = [
+    #     'esm.encoder.go_embedder',
+    #     'esm.encoder.ipr_embedder',
+    #     'esm.encoder.layer.*.adaLN_modulation.1.*'
+    # ]
+    
+    # # 精确解冻指定模块
+    # import fnmatch
+    # for name, param in net.named_parameters():
+    #     if any(fnmatch.fnmatch(name, pattern) for pattern in modules_to_save):
+    #         param.requires_grad = True
+
+    def check_gradient_status(net):
+        """检查模型参数的梯度状态"""
+        total_params = 0
+        trainable_params = 0
+        
+        for name, param in net.named_parameters():
+            total_params += param.numel()
+            if param.requires_grad:
+                trainable_params += param.numel()
+        
+        print(f"\nTotal parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        print(f"Frozen parameters: {total_params - trainable_params:,}")
+        print(f"Trainable ratio: {trainable_params/total_params*100:.2f}%")
+    
+    check_gradient_status(net)
+
     return net
 
 def topk_masking(scores, cutoff_len, stochastic=False, temp=1.0):

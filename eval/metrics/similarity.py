@@ -1,7 +1,9 @@
 import numpy as np
-from .spectrum import spectrum_map
+from .spectrum import spectrum_map,esm_embedding_map
 from tqdm import tqdm
 from sklearn.metrics.pairwise import rbf_kernel, pairwise_distances
+import esm
+from functools import partial
 
 def median_heuristic(emb):
     """
@@ -14,10 +16,14 @@ def median_heuristic(emb):
     gamma = 1.0 / (2 * sigma ** 2)  # RBF 核的 gamma
     return gamma
 
-def mmd(seq1=None, seq2=None, emb1=None, emb2=None, mean1=None, mean2=None, embedding='spectrum', kernel='linear', kernel_args={}, return_pvalue=False, progress=False, **kwargs):
+def mmd(seq1=None, seq2=None, emb1=None, emb2=None, mean1=None, mean2=None, embedding='esm', kernel='linear', kernel_args={}, return_pvalue=False, progress=False, **kwargs):
     '''
     Calculates MMD between two sets of sequences. Optionally takes embeddings or mean embeddings of sequences if these have been precomputed for efficiency. If <return_pvalue> is true, a Monte-Carlo estimate (1000 iterations) of the p-value is returned. Note that this is compute-intensive and only implemented for the linear kernel.
     '''
+
+    if not mean1 is None and not mean2 is None:
+        MMD = np.sqrt(np.dot(mean1,mean1) + np.dot(mean2,mean2) - 2*np.dot(mean1,mean2))
+        return MMD
 
     if embedding == 'spectrum':
         embed = spectrum_map
@@ -25,15 +31,22 @@ def mmd(seq1=None, seq2=None, emb1=None, emb2=None, mean1=None, mean2=None, embe
         raise NotImplementedError
     if embedding == 'unirep':
         raise NotImplementedError
-
+    if embedding == 'esm':
+        DEVICE = "cuda:0"
+        model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+        model = model.to(DEVICE)
+        model.eval()
+        embed = partial(esm_embedding_map, 
+                   model=model, 
+                   alphabet=alphabet, 
+                   layer=33, 
+                   mode='cls')
+ 
     if mean1 is None and emb1 is None:
-        emb1 = embed(seq1, progress=progress, **kwargs)
+        emb1 = embed(sequences=seq1, progress=progress, **kwargs)
     if mean2 is None and emb2 is None:
-        emb2 = embed(seq2, progress=progress, **kwargs)
+        emb2 = embed(sequences=seq2, progress=progress, **kwargs)
 
-    if not mean1 is None and not mean2 is None:
-        MMD = np.sqrt(np.dot(mean1,mean1) + np.dot(mean2,mean2) - 2*np.dot(mean1,mean2))
-        return MMD
 
     if kernel == 'linear':
         x = np.mean(emb1, axis=0)

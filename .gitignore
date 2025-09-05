@@ -178,3 +178,4 @@ run/.DS_Store
 data-bin/
 checkpoints/
 pretrained/*
+byprot-checkpoints-temp/*

@@ -1,6 +1,7 @@
 import numpy as np
 import itertools
 from tqdm import tqdm
+import torch
 
 amino_acid_alphabet = 'ARNDCEQGHILKMFPSTWYV'
 
@@ -61,3 +62,83 @@ def spectrum_map(sequences, k=3, mode='count', normalize=True, progress=False):
 
     it = tqdm(sequences) if progress else sequences
     return np.array([map(seq) for seq in it], dtype=np.float32)
+
+def esm_embedding_map(sequences, model, alphabet, mode='cls', layer=33, progress=False):
+    '''
+    Maps a set of protein sequences to ESM embedding representation.
+    
+    Parameters:
+    -----------
+    sequences : list of str or str
+        Protein sequences to embed
+    model : esm.pretrained model
+        Pretrained ESM model
+    alphabet : esm.data.Alphabet
+        ESM alphabet
+    mode : str, optional (default='mean')
+        How to pool token embeddings: 'mean', 'sum', 'cls', or 'pooler'
+    layer : int, optional (default=None)
+        Which layer to extract embeddings from (None = last layer)
+    progress : bool, optional (default=False)
+        Whether to show progress bar
+    
+    Returns:
+    --------
+    numpy.ndarray
+        Array of shape (n_sequences, embedding_dim)
+    '''
+    
+    if isinstance(sequences, str):
+        sequences = [sequences]
+    
+    # Set model to evaluation mode
+    model.eval()
+    
+    # Get device
+    device = next(model.parameters()).device
+    
+    # Prepare batch converter
+    batch_converter = alphabet.get_batch_converter()
+    
+    def get_embeddings(sequence):
+        # Prepare data
+        data = [("protein", sequence)]
+        batch_labels, batch_strs, batch_tokens = batch_converter(data)
+        batch_tokens = batch_tokens.to(device)
+        
+        # Get embeddings
+        with torch.no_grad():
+            results = model(batch_tokens, repr_layers=[layer] if layer is not None else [model.num_layers], return_contacts=False)
+            embeddings = results["representations"][layer if layer is not None else model.num_layers]
+        
+        # Remove batch dimension and special tokens
+        embeddings = embeddings[0, 1:-1, :]  # Remove [CLS] and [EOS] tokens
+        
+        # Pool embeddings
+        if mode == 'mean':
+            pooled = embeddings.mean(dim=0)
+        elif mode == 'sum':
+            pooled = embeddings.sum(dim=0)
+        elif mode == 'cls':
+            pooled = results["representations"][layer if layer is not None else model.num_layers][0, 0, :]  # [CLS] token
+        elif mode == 'pooler' and hasattr(model, 'pooler'):
+            pooled = model.pooler(embeddings.unsqueeze(0)).squeeze(0)
+        else:
+            raise ValueError(f"Unknown pooling mode: {mode}")
+        
+        return pooled.cpu().numpy()
+    
+    # Process sequences
+    it = tqdm(sequences) if progress else sequences
+    embeddings = []
+    
+    for seq in it:
+        try:
+            emb = get_embeddings(seq)
+            embeddings.append(emb)
+        except Exception as e:
+            print(f"Error processing sequence: {e}")
+            # Add zero vector as fallback
+            embeddings.append(np.zeros(model.embed_dim if hasattr(model, 'embed_dim') else 1280))
+    
+    return np.array(embeddings, dtype=np.float32)

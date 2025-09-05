@@ -578,7 +578,7 @@ class AGFMLayerDPLM2(nn.Module):
                 batch_first=True,
             )
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
-            self.motif_cross_res_scale = nn.Parameter(torch.tensor(1.0))
+            self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.0))
 
 
     def forward(
@@ -660,12 +660,21 @@ class AGFMLayerDPLM2(nn.Module):
         # attention_output_ln = self.LayerNorm(attention_output)
 
         if self.use_motif_struct_emb:
+            # print("use motif_struct_emb")
             # print(motif_struct_emb)
             # exit()
             # ====== （新增）功能 cross-attention：tokens(Q) ← F(K,V) ======
             # 作用于 AA 与 Struct 全体 token；若 use_diff_modulation=True，用 type_ids 做门控区分
             if motif_struct_emb is not None:
                 # cond_input: [B, D] or [B, 1, D]
+                # print("use motif_struct_emb", motif_struct_emb.shape)
+                if self.training and motif_struct_emb is not None:
+                    dropout_prob = 0.6  # 30%的概率使用全零向量
+                    if torch.rand(1).item() < dropout_prob:
+                        # 创建与motif_struct_emb相同形状的全零张量
+                        # print("drop motif_struct_emb")
+                        motif_struct_emb = torch.zeros_like(motif_struct_emb)
+
                 if motif_struct_emb.dim() == 2:
                     motif_tok = motif_struct_emb.unsqueeze(1)     # [B, 1, D]
                 else:
@@ -687,11 +696,17 @@ class AGFMLayerDPLM2(nn.Module):
                 if output_attentions:
                     outputs = (motif_cross_w,) + outputs  # 可选：把功能 cross-attn 的权重也返回，便于可视化
             # else: 不传 cond_input 就不做功能 cross-attn
+            # else:
+                # print("not use motif_struct_emb")
         
         n_half = attention_output.size(1) // 2
         struct_mask = torch.zeros_like(attention_output)
         struct_mask[:, :n_half, :] = 1  # 前半部分为1，后半部分为0
-        attention_output = attention_output + self.cross_res_scale * cross_out + self.motif_cross_res_scale * motif_cross_out * struct_mask
+
+        if self.use_func_cross_attn:
+            attention_output = attention_output + self.cross_res_scale * cross_out * struct_mask
+        if self.use_motif_struct_emb:
+            attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out * struct_mask
 
         # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
         attention_output_ln = self.LayerNorm(attention_output)

@@ -1264,7 +1264,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         return output_tokens, output_scores
 
-    def resample_conditional(self, _tokens, _scores, ratio, scale, go=None, ipr=None, seq_cond=None, ec=None):
+    def resample_conditional(self, _tokens, _scores, ratio, scale, go=None, ipr=None, seq_cond=None, ec=None, motif_struct_emb=None, **kwargs):
         to_be_resample_idx = []
         resample_input = []
         resample_input_mask = []
@@ -1323,9 +1323,10 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             if seq_cond is not None:
                 raise NotImplementedError
                 resample_input_seq_cond = torch.stack(resample_input_seq_cond, dim=0).type_as(_tokens)
-
-            inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec)
-
+            if motif_struct_emb is not None:
+                inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec, motif_struct_emb=motif_struct_emb[to_be_resample_idx])
+            else:
+                inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec, motif_struct_emb=None)
             type_ids = self.get_modality_type(_tokens)
             
             resample_logits = self.net(
@@ -1358,7 +1359,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             _tokens[to_be_resample_idx], _scores[to_be_resample_idx] = resample_input, resample_input_scores
             
     def forward_decoder(self, prev_decoder_out, need_attn_weights=False, partial_masks=None,
-                        sampling_strategy='gumbel_argmax', go_label=None, ipr_label=None, seq_cond=None, ec_label=None,):
+                        sampling_strategy='gumbel_argmax', go_label=None, ipr_label=None, seq_cond=None, ec_label=None, motif_struct_emb=None):
         output_tokens = prev_decoder_out['output_tokens'].clone()
         output_scores = prev_decoder_out['output_scores'].clone()
         step, max_step = prev_decoder_out['step'], prev_decoder_out['max_step']
@@ -1367,7 +1368,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         output_masks = self.get_non_special_symbol_mask(output_tokens, partial_masks=partial_masks)
 
-        inputs = dict(x_t=output_tokens, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
+        inputs = dict(x_t=output_tokens, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
 
         input_mask = output_tokens.ne(self.pad_id)
         L = output_tokens.shape[1]
@@ -1443,7 +1444,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 logits, temperature=0.0, noise_scale=noise_scale
             )
 
-            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
 
             _tokens.masked_scatter_(
                 ~output_masks, output_tokens[~output_masks]
@@ -1460,7 +1461,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 logits, temperature=temperature
             )
 
-            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label)
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
         else:
             _tokens, _scores = sample_from_categorical(
                 logits, temperature=temperature
@@ -1831,6 +1832,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                     ipr_label=batch.get('ipr_label', None),
                     seq_cond=batch.get('seq_cond', None),
                     ec_label=batch.get('ec_label', None),
+                    motif_struct_emb=batch.get('motif_struct_emb', None),
 
                 )
 

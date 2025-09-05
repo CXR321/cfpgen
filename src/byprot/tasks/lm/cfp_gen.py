@@ -372,66 +372,66 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
 
         super().on_validation_epoch_end()
 
-    def configure_optimizers(self):
-        """Choose what optimizers and learning-rate schedulers to use in your optimization.
-        Normally you'd need one. But in the case of GANs or similar you might have multiple.
+    # def configure_optimizers(self):
+    #     """Choose what optimizers and learning-rate schedulers to use in your optimization.
+    #     Normally you'd need one. But in the case of GANs or similar you might have multiple.
 
-        See examples here:
-            https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
-        """
+    #     See examples here:
+    #         https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
+    #     """
 
-        if 'encoder' in self.hparams.model: # cfp_gen_if
-            optimizer = get_optimizer(self.hparams.optimizer, self.trainer.model.parameters())
+    #     if 'encoder' in self.hparams.model: # cfp_gen_if
+    #         optimizer = get_optimizer(self.hparams.optimizer, self.trainer.model.parameters())
 
-        else:  # cfp_gen
-            # pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
-            # pretrained_state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
+    #     else:  # cfp_gen
+    #         # pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
+    #         # pretrained_state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
 
-            pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
+    #         pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
 
-            # WARNIG: 强行换成了DPLM2
-            pretrained_net = (
-                MultimodalDiffusionProteinLanguageModel.from_pretrained(
-                    pretrained_model_name_or_path
-                ).net
-            )
-            pretrained_state_dict = pretrained_net.state_dict()
+    #         # WARNIG: 强行换成了DPLM2
+    #         pretrained_net = (
+    #             MultimodalDiffusionProteinLanguageModel.from_pretrained(
+    #                 pretrained_model_name_or_path
+    #             ).net
+    #         )
+    #         pretrained_state_dict = pretrained_net.state_dict()
 
-            all_params = list(self.trainer.model.named_parameters())
+    #         all_params = list(self.trainer.model.named_parameters())
 
-            pretrained_params = []
-            pretrained_names = []
-            new_names = []
-            new_params = []
+    #         pretrained_params = []
+    #         pretrained_names = []
+    #         new_names = []
+    #         new_params = []
 
-            for name, param in all_params:
-                # rm "module.model.net." prefix
-                key_core = name.replace('module.model.net.', '')
+    #         for name, param in all_params:
+    #             # rm "module.model.net." prefix
+    #             key_core = name.replace('module.model.net.', '')
 
-                if (key_core in pretrained_state_dict) and (not 'seq_controlnet' in key_core): # todo debug: stage2
-                    pretrained_names.append(key_core)
-                    pretrained_params.append(param)
-                else:
-                    new_names.append(key_core)
-                    new_params.append(param)
+    #             if (key_core in pretrained_state_dict) and (not 'seq_controlnet' in key_core): # todo debug: stage2
+    #                 pretrained_names.append(key_core)
+    #                 pretrained_params.append(param)
+    #             else:
+    #                 new_names.append(key_core)
+    #                 new_params.append(param)
 
-            print(f"pretrained_names: {len(pretrained_names)}")
-            print(f"new_names: {len(new_names)}")
-            # exit()
+    #         print(f"pretrained_names: {len(pretrained_names)}")
+    #         print(f"new_names: {len(new_names)}")
+    #         # exit()
 
-            optimizer = get_optimizer(
-                self.hparams.optimizer,
-                [
-                    # 跳过预训练模型的参数
-                    # {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
-                    {"params": new_params, "lr": self.hparams.optimizer.lr}
-                ]
-            )
+    #         optimizer = get_optimizer(
+    #             self.hparams.optimizer,
+    #             [
+    #                 # 跳过预训练模型的参数
+    #                 # {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
+    #                 {"params": new_params, "lr": self.hparams.optimizer.lr}
+    #             ]
+    #         )
 
-        if "lr_scheduler" in self.hparams and self.hparams.lr_scheduler is not None:
-            lr_scheduler, extra_kwargs = get_scheduler(self.hparams.lr_scheduler, optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {"scheduler": lr_scheduler, **extra_kwargs},
-            }
-        return optimizer
+    #     if "lr_scheduler" in self.hparams and self.hparams.lr_scheduler is not None:
+    #         lr_scheduler, extra_kwargs = get_scheduler(self.hparams.lr_scheduler, optimizer)
+    #         return {
+    #             "optimizer": optimizer,
+    #             "lr_scheduler": {"scheduler": lr_scheduler, **extra_kwargs},
+    #         }
+    #     return optimizer
