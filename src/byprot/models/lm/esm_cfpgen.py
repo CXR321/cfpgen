@@ -578,7 +578,7 @@ class AGFMLayerDPLM2(nn.Module):
                 batch_first=True,
             )
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
-            self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.0))
+            self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.1))
 
 
     def forward(
@@ -696,8 +696,9 @@ class AGFMLayerDPLM2(nn.Module):
                 if output_attentions:
                     outputs = (motif_cross_w,) + outputs  # 可选：把功能 cross-attn 的权重也返回，便于可视化
             # else: 不传 cond_input 就不做功能 cross-attn
-            # else:
-                # print("not use motif_struct_emb")
+            else:
+                print("motif cond activate but no motif_struct_emb in input data")
+                raise NotImplementedError
         
         n_half = attention_output.size(1) // 2
         struct_mask = torch.zeros_like(attention_output)

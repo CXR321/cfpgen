@@ -72,8 +72,8 @@ model:
 
   use_diff_modulation: true
   use_func_cross_attn: true
-  use_diff_ce: false
-  use_motif_struct_emb: true
+  use_diff_ce: true
+  use_motif_struct_emb: false
 
 
 task:

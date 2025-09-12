@@ -5,7 +5,7 @@ import numpy as np
 # 定义要比较的模型路径和标签
 model_configs = [
     {
-        'path': "byprot-checkpoints-temp/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_wandb/checkpoints/step_49999.0-loss_0.69.ckpt",
+        'path': "byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb/checkpoints/step_24999.0-loss_0.74.ckpt",
         'label': 'Model 1',
         'has_motif': True
     },
@@ -15,8 +15,23 @@ model_configs = [
     #     'has_motif': True
     # },
     {
-        'path': "byprot-checkpoints-temp/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_wandb/checkpoints/step_89999.0-loss_0.68.ckpt",
+        'path': "byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb/checkpoints/step_29999.0-loss_0.72.ckpt",
         'label': 'Model 2',
+        'has_motif': True
+    },
+    {
+        'path': "byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb/checkpoints/step_34999.0-loss_0.73.ckpt",
+        'label': 'Model 3',
+        'has_motif': True
+    },
+    {
+        'path': "byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb/checkpoints/step_39999.0-loss_0.72.ckpt",
+        'label': 'Model 4',
+        'has_motif': True
+    },
+    {
+        'path': "byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb/checkpoints/step_44999.0-loss_0.68.ckpt",
+        'label': 'Model 5',
         'has_motif': True
     },
     {

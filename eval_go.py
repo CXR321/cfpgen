@@ -89,6 +89,9 @@ def main(data_root, ont, test_predictions):
     gt_list = [gts[uid] for uid in common_uids]
     pred_list = [preds[uid] for uid in common_uids]    
 
+    # print(gt_list[2595], common_uids[2595], pred_list[2595])
+    # exit()
+
     print(f"after filtering, len(common_uids), len(gt_list), len(pred_list): {len(common_uids)}, {len(gt_list)}, {len(pred_list)}")
 
     for i, this_gt_go in enumerate(gt_list):
@@ -156,6 +159,28 @@ def main(data_root, ont, test_predictions):
     print(f'Recall (Macro): {recall_mac:.3f}')
     print(f'Precision (Micro): {precision_mic:.3f}')
     print(f'Recall (Micro): {recall_mic:.3f}')
+
+    # 计算每个样本的F1分数
+    # f1_per_sample = []
+    # for i in range(len(y_true_binary)):
+    #     if np.sum(y_true_binary[i]) == 0 and np.sum(y_pred_binary[i]) == 0:
+    #         # 如果真实值和预测值都为空，F1为1
+    #         f1_per_sample.append(1.0)
+    #     else:
+    #         f1 = f1_score(y_true_binary[i].reshape(1, -1), 
+    #                     y_pred_binary[i].reshape(1, -1), 
+    #                     average='macro', zero_division=0)
+    #         f1_per_sample.append(f1)
+
+    # # 找到F1 score最小的10个样本ID
+    # worst_f1_indices = np.argsort(f1_per_sample)[:10]
+
+    # for worst_idx in worst_f1_indices:
+    #     print(f"Worst F1 sample {worst_idx}: {common_uids[worst_idx]}, Score: {f1_per_sample[worst_idx]}")
+    #     print(f"True labels: {gt_list[worst_idx]}")
+    #     print(f"Predictions: {pred_list[worst_idx]}")
+        # print(f"True labels: {gt_list[worst_idx]}")
+
 
 
     with open(output_log, 'w') as log_file:
