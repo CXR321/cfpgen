@@ -125,6 +125,7 @@ def get_net(cfg):
             config.use_diff_modulation = getattr(cfg, "use_diff_modulation", False)
             config.use_func_cross_attn = getattr(cfg, "use_func_cross_attn", False)
             config.use_motif_struct_emb = getattr(cfg, "use_motif_struct_emb", False)
+            config.use_static_scale = getattr(cfg, "use_static_scale", False)
 
             # print(f"config: {config}")
             if 'cond' in cfg:

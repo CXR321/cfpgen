@@ -551,8 +551,11 @@ class AGFMLayerDPLM2(nn.Module):
         self.use_diff_modulation = getattr(config, "use_diff_modulation", False)
         self.use_func_cross_attn = getattr(config, "use_func_cross_attn", False)
         self.use_motif_struct_emb = getattr(config, "use_motif_struct_emb", False)
+        self.use_static_scale = getattr(config, "use_static_scale", False)
 
         # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
+        # print(f"use static scale: {self.use_static_scale}")
+        # exit()
 
         if self.use_func_cross_attn:
 
@@ -565,7 +568,11 @@ class AGFMLayerDPLM2(nn.Module):
                 batch_first=True,
             )
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
-            self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
+
+            if not self.use_static_scale:
+                self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
+            else:
+                self.cross_res_scale = torch.tensor(1.0)
 
         if self.use_motif_struct_emb:
 
@@ -578,7 +585,10 @@ class AGFMLayerDPLM2(nn.Module):
                 batch_first=True,
             )
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
-            self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.1))
+            if not self.use_static_scale:
+                self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.1))
+            else:
+                self.motif_cross_res_scale = torch.tensor(0.5)
 
 
     def forward(
@@ -669,26 +679,94 @@ class AGFMLayerDPLM2(nn.Module):
                 # cond_input: [B, D] or [B, 1, D]
                 # print("use motif_struct_emb", motif_struct_emb.shape)
                 if self.training and motif_struct_emb is not None:
-                    dropout_prob = 0.6  # 30%的概率使用全零向量
+                    dropout_prob = 0.3  # 30%的概率使用全零向量
                     if torch.rand(1).item() < dropout_prob:
                         # 创建与motif_struct_emb相同形状的全零张量
                         # print("drop motif_struct_emb")
                         motif_struct_emb = torch.zeros_like(motif_struct_emb)
 
                 if motif_struct_emb.dim() == 2:
+                    # print("2d motif_struct_emb")
                     motif_tok = motif_struct_emb.unsqueeze(1)     # [B, 1, D]
                 else:
                     motif_tok = motif_struct_emb                  # 允许 [B, 1, D]
 
+                # motif_tok = motif_struct_emb # [B, 7, hidden_size]
+
+                
+
                 motif_tok = self.motif_proj(motif_tok)        # 线性投影到 d_model
+
+                # print(f"motif_tok: {motif_tok.shape}, motif_mask: {motif_mask.shape}, motif_mask_sum: {motif_mask.sum()}")
 
                 # 预归一化 + CrossAttn
                 q = self.motif_cross_attn_ln(attention_output)           # [B, L, D]
-                motif_cross_out, motif_cross_w = self.motif_cross_attn(
-                    query=q, key=motif_tok, value=motif_tok,
-                    need_weights=output_attentions,
-                    attn_mask=None, key_padding_mask=None
-                )  # cross_out: [B, L, D]
+
+                # def check_nan(tensor, name):
+                #     if torch.isnan(tensor).any():
+                #         print(f"NaN detected in {name}")
+                #         return True
+                #     return False
+
+                if motif_struct_emb.dim() == 2:
+                    raise NotImplementedError("motif_struct_emb.dim() == 2")
+                    motif_cross_out, motif_cross_w = self.motif_cross_attn(
+                        query=q, key=motif_tok, value=motif_tok,
+                        need_weights=output_attentions,
+                        attn_mask=None, key_padding_mask=None
+                    )  # cross_out: [B, L, D]
+                else:
+
+                    motif_mask = (motif_struct_emb.sum(dim=-1) == 0) # [B, 7]
+                    all_motif_dropped = motif_mask.all(dim=1)  # [B]
+
+                    if motif_mask.all():  # batch 里该样本所有motif都drop了
+                        motif_cross_out = torch.zeros_like(q)   # 或者 residual(q)
+                        motif_cross_w = None
+                    else:
+                        motif_cross_out = torch.zeros_like(q)
+                        motif_cross_w = torch.zeros_like(q)
+
+                        valid_indices = ~all_motif_dropped
+                        
+                        if valid_indices.any():
+                            valid_q = q[valid_indices]
+                            valid_motif_tok = motif_tok[valid_indices]
+                            valid_mask = motif_mask[valid_indices]
+
+                            # print(f"valid_indices: {valid_indices.shape}, valid_q: {valid_q.shape}, valid_motif_tok: {valid_motif_tok.shape}, valid_mask: {valid_mask.shape}")
+                            # print(f"valid_indices: {valid_indices}")  
+                            # print(f"motif_cross_out: {motif_cross_out.shape}, motif_cross_w: {motif_cross_w.shape}")
+
+                            valid_out, valid_w = self.motif_cross_attn(
+                                query=valid_q, 
+                                key=valid_motif_tok, 
+                                value=valid_motif_tok,
+                                need_weights=output_attentions,
+                                key_padding_mask=valid_mask
+                            )
+                            # print(f"valid_out: {valid_out.shape}")
+
+                            motif_cross_out = torch.zeros_like(q, dtype=valid_out.dtype)
+                            # valid_indices = torch.where(~all_motif_dropped)[0]
+                            # print(f"valid_indices: {valid_indices}")
+                            motif_cross_out[valid_indices] = valid_out
+                            if output_attentions:
+                                motif_cross_w[valid_indices] = valid_w
+
+                # flag = False
+                
+                # flag = flag or check_nan(motif_cross_out, "motif_cross_out")
+                # flag = flag or check_nan(q, "q")
+                # flag = flag or check_nan(motif_tok, "motif_tok")
+                # flag = flag or check_nan(motif_mask, "motif_mask")
+
+                # if flag:
+                #     print(f"motif_mask: {motif_mask}")
+                #     print(f"motif_tok: {motif_tok}")
+                #     exit()
+
+
 
                 # 残差 + 门控（AA/Struct 差异化）
                 # attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out

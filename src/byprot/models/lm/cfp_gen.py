@@ -89,6 +89,7 @@ class CFPGENConfig_DPLM2:
     use_func_cross_attn: bool = field(default=False)
     use_diff_ce: bool = field(default=False)
     use_motif_struct_emb: bool = field(default=False)
+    use_static_scale: bool = field(default=False)
 
 
 @register_model('cfp_gen')
@@ -735,6 +736,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         self.use_diff_ce = getattr(self.cfg, 'use_diff_ce', False)
         self.use_motif_struct_emb = getattr(self.cfg, 'use_motif_struct_emb', False)
+        self.use_static_scale = getattr(self.cfg, 'use_static_scale', False)
 
         
         if self.cfg.gradient_ckpt:

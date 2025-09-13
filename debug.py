@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 print(torch.__version__)  # 输出 PyTorch 版本
 print(torch.version.cuda)  # 输出 PyTorch 编译时使用的 CUDA 版本
 print(torch.cuda.is_available())  # 检查 CUDA 是否可用（True/False）
@@ -15,5 +16,9 @@ import torch.nn as nn
 # # 访问原始模块
 # print(wrapped.base_module)  # 原来的 nn.Linear(10, 5)
 
-t = torch.tensor([[True, False], [False, True]])
-print(~t)
+# t = torch.tensor([[True, False], [False, True]])
+# print(~t)
+
+scores = torch.tensor([[-float('inf'), -float('inf'), -float('inf')]])
+weights = F.softmax(scores, dim=-1)
+print("Softmax output:", weights)  # 看看是否产生NaN

@@ -325,9 +325,10 @@ if __name__ == "__main__":
 
     # exit()
     # path = "generation-results-dplm2-diff-cross-dc-5.5wstep/cfpgen_general_dataset_stage1_dplm2_dm_ca_dc_pow2weight_wandb_go-ipr-500iter-repeat_cut.fasta"
-    path = "generation-results-dplm2-diff-cross-me-drop6-3wstep/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb_go-ipr-500iter-repeat_cut.fasta"
-    search_fasta_motifs(path)
-    exit()
+    # path = "generation-results-dplm2-diff-cross-me-drop6-3wstep/cfpgen_general_dataset_stage1_dplm2_dm_ca_me_drop6_wandb_go-ipr-500iter-repeat_cut.fasta"
+    # search_fasta_motifs(path)
+    # exit()
+
 
 
     path = "generation-results-dplm2-diff-cross/cfpgen_general_dataset_stage1_dplm2_diff-modulation_func-cross-attn_wandb_go-ipr-500iter-repeat_cut-debug.fasta"

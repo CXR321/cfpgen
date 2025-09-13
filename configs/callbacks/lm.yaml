@@ -11,7 +11,7 @@ model_checkpoint:
   dirpath: ${paths.ckpt_dir}
   filename: "step_{global_step}-loss_{val/loss:.2f}"
   auto_insert_metric_name: False
-  every_n_train_steps: 5000
+  every_n_train_steps: 10000
   every_n_epochs: null
 
 early_stopping:

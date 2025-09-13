@@ -571,7 +571,7 @@ class DPLM2Collater(object):
         batch.update(cfpgen_batch)
 
         batch['motif_mask'] = motif_mask
-        batch['motif_struct_emb'] = torch.stack(motif_struct_emb_list).mean(dim=1)
+        batch['motif_struct_emb'] = torch.stack(motif_struct_emb_list)
 
         # assert len(batch["struct_tokens"]["targets"][0]) == len(batch["aatype_tokens"]["targets"][0]) == len(batch["input_ids"]) == len(batch["input_mask"][0]) == len(batch["targets"][0])
 
