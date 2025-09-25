@@ -80,7 +80,28 @@ print(torch.cuda.is_available())  # 检查 CUDA 是否可用（True/False）
 
 
 import pickle
-with open("generation-results-cfpgen_650m/cfpgen_650m_go-ipr_interproscan_eval.pkl", "rb") as f:
+# with open("generation-results-cfpgen_650m/cfpgen_650m_go-ipr_interproscan_eval.pkl", "rb") as f:
+#     data = pickle.load(f)
+
+# print(data[0])
+
+path = "data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif.pkl"
+# path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold.pkl"
+path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif.pkl"
+path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl"
+# path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold.pkl"
+
+
+with open(path, "rb") as f:
     data = pickle.load(f)
 
-print(data[0])
+print(len(data))
+n = 0
+for meta in data:
+    # if meta.get('pfam_motif', None) is None:
+    # print(meta)
+    if meta.get('esmfold_plddt',None) is not None:
+
+        print(meta)
+        
+print(n)

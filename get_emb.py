@@ -32,14 +32,17 @@ import random
 # model.eval()
 # model.to("cuda")
 
-def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
+def find_motif_in_aa_seq(aa_seq, motif_segment, seq=None, name=None):
     """在 aa_seq 中查找 motif_segment 的准确位置"""
     index = aa_seq.find(motif_segment)
     if index == -1:
         print(f"❌ Motif segment {motif_segment} not found in aa_seq!")
         print(f"aa_seq: {aa_seq}")
-        print(f"seq: {seq}")
-        print(f"name: {name}")
+        try:
+            print(f"seq: {seq}")
+            print(f"name: {name}")
+        except:
+            pass
 
         # raise ValueError("❌ Motif segment not found in aa_seq!")
         return None, None

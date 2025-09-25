@@ -1,13 +1,13 @@
-# export CUDA_VISIBLE_DEVICES=3,7,6,0
+export CUDA_VISIBLE_DEVICES=3,7,6,5
 # export CUDA_VISIBLE_DEVICES=0,7
-export CUDA_VISIBLE_DEVICES=4
+# export CUDA_VISIBLE_DEVICES=1,6
 # CUDA_VISIBLE_DEVICES=0,1,3,4
 
 # max_tokens=8192
 # max_tokens=4096
-# max_tokens=2048
-max_tokens=1024
-accumulate_grad_batches=16
+max_tokens=2048
+# max_tokens=1024
+accumulate_grad_batches=2
 
 # exp=cfpgen/cfpgen_650m_stage1
 exp=cfpgen/cfpgen_650m_stage1_dplm2

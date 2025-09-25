@@ -8,7 +8,7 @@ from functools import partial
 from tqdm import tqdm
 from biotite.sequence.io import fasta
 from get_emb_cal import load_embeddings
-from get_emb import find_pfam_in_aaseq
+from get_emb import find_pfam_in_aaseq, find_motif_in_aa_seq
 import torch
 import numpy as np
 
@@ -174,6 +174,11 @@ def save_all_pfam_emb_data(name, data):
     with open(f"data-bin/uniprotKB/cfpgen_general_dataset/{name}_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl", "wb") as f:
         pickle.dump(data, f)
 
+def load_all_pfam_emb_data(name):
+    with open(f"data-bin/uniprotKB/cfpgen_general_dataset/{name}_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl", "rb") as f:
+        all_data = pickle.load(f)
+    return all_data
+
 def load_pfam_emb_data():
     with open(f"data-bin/uniprotKB/cfpgen_general_dataset/train_pfam_cls_emb_pfamMotif.pkl", "rb") as f:
         pfam_data = pickle.load(f)
@@ -197,7 +202,7 @@ def load_pfam_emb_data():
     return pfam_data
 
 def load_test_data_motif_emb():
-    with open(f"data-bin/uniprotKB/cfpgen_general_dataset/test_data_motif_emb.pkl", "rb") as f:
+    with open(f"data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif.pkl", "rb") as f:
         test_data = pickle.load(f)
     return test_data
 
@@ -361,9 +366,15 @@ def load_pfam_emb():
 
                 motif_struct_emb = torch.zeros(7, 1280, dtype=torch.float32)
 
+                pfam_position_s = []
+                pfam_position_e = []
+
                 for pfam in res['significant_pfams']:
                     s, e = pfam['aa_s'], pfam['aa_e']
                     motif_mask[s:e] = True
+
+                    pfam_position_s.append(s)
+                    pfam_position_e.append(e)
 
                     if pfam['pfam_id'] not in pfam_emb:
                         continue
@@ -376,6 +387,8 @@ def load_pfam_emb():
 
                 data['pfam_mask'] = motif_mask
                 data['pfam_emb'] = motif_struct_emb
+                data['pfam_position_s'] = pfam_position_s
+                data['pfam_position_e'] = pfam_position_e
 
                 if motif_num == 0:
                     data['pfam_emb'] = None
@@ -398,13 +411,71 @@ def load_pfam_emb():
     new_test = add_pfam_emb(test_data, pfam_data)
     save_all_pfam_emb_data("test", new_test)
 
+def load_motif_segment_mask_data():
+
+
+    def modify(data):
+        new_data = []
+        for meta_data in data:
+            item = meta_data
+            motif_position_s = []
+            motif_position_e = []
+            motif_mask = torch.zeros(len(item['aa_seq']), dtype=torch.bool)
+            if item.get('motif'):
+                for motif in item['motif']:
+                    try:
+                        s, e = find_motif_in_aa_seq(item['aa_seq'], motif['motif_segment'])
+                    except:
+                        print(f"Error in {item['uniprot_id']}")
+                        # print(item)
+                    
+                    if s != None and e != None:
+                        motif_position_s.append(s)
+                        motif_position_e.append(e)
+                        motif_mask[s:e] = True
+                        continue
+                    else:
+                        s, e = find_pfam_in_aaseq(item['aa_seq'], item['sequence'], motif['start'], motif['end'])
+                        if s != None and e != None:
+                            motif_position_s.append(s)
+                            motif_position_e.append(e)
+                            motif_mask[s:e] = True
+                            continue
+                        else:
+                            continue
+                if len(motif_position_s) != 0:
+                    item['motif_mask'] = motif_mask
+                    item['motif_position_s'] = motif_position_s
+                    item['motif_position_e'] = motif_position_e
+                else:
+                    pass
+            new_data.append(item)
+        return new_data
+
+
+
+
+    data = load_all_pfam_emb_data("train") # 加载pfam_emb数据
+    data = modify(data)
+    print(f"example: {data[0]}")
+    save_all_pfam_emb_data("train", data)
+
+    data = load_all_pfam_emb_data("valid") # 加载pfam_emb数据
+    data = modify(data)
+    save_all_pfam_emb_data("valid", data)
+
+    data = load_all_pfam_emb_data("test") # 加载pfam_emb数据
+    data = modify(data)
+    save_all_pfam_emb_data("test", data)
+
 
 
 
 
 if __name__ == "__main__":
     # load_struct_token()
-    load_pfam_emb()
+    # load_pfam_emb()
+    load_motif_segment_mask_data()
 
 # d = load_all_motif_data("train")
 # d = load_all_pfam_data("train")
