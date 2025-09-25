@@ -679,7 +679,7 @@ class AGFMLayerDPLM2(nn.Module):
                 # cond_input: [B, D] or [B, 1, D]
                 # print("use motif_struct_emb", motif_struct_emb.shape)
                 if self.training and motif_struct_emb is not None:
-                    dropout_prob = 0.3  # 30%的概率使用全零向量
+                    dropout_prob = 0.1  # 30%的概率使用全零向量
                     if torch.rand(1).item() < dropout_prob:
                         # 创建与motif_struct_emb相同形状的全零张量
                         # print("drop motif_struct_emb")

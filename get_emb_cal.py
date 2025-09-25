@@ -9,6 +9,7 @@ from scipy.spatial.distance import cdist
 import pandas as pd
 from skbio.stats.distance import permanova  # 添加PERMANOVA
 from statsmodels.stats.multitest import multipletests  # 添加多重检验校正
+import random
 
 # 设置样式
 plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
@@ -209,7 +210,7 @@ def visualize_embeddings(embeddings_dict, method='tsne', title_suffix=""):
     axes[1].set_ylabel('Component 2')
     
     plt.tight_layout()
-    plt.savefig(f'go_terms_embeddings_{method}{title_suffix.replace(" ", "_")}.png', 
+    plt.savefig(f'go_terms_embeddings_{method}{title_suffix.replace(" ", "_")}_pfam.png', 
                 dpi=300, bbox_inches='tight')
     plt.show()
     
@@ -256,7 +257,7 @@ def plot_statistics(intra_similarities, inter_distances):
     axes[1, 1].set_ylabel('Mean Inter-class Distance')
     
     plt.tight_layout()
-    plt.savefig('go_terms_statistics.png', dpi=300, bbox_inches='tight')
+    plt.savefig('go_terms_statistics_pfam.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 def plot_density_visualization(embeddings_dict, method='tsne'):
@@ -291,7 +292,7 @@ def plot_density_visualization(embeddings_dict, method='tsne'):
     plt.ylabel('Component 2')
     
     plt.tight_layout()
-    plt.savefig(f'go_terms_density_{method}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'go_terms_density_{method}_pfam.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 def analyze_embeddings(go_terms_emb):
@@ -445,7 +446,7 @@ def plot_detailed_analysis(embeddings_dict, intra_similarities, inter_distances)
     plt.colorbar(im, ax=axes[1, 2])
     
     plt.tight_layout()
-    plt.savefig('detailed_analysis.png', dpi=300, bbox_inches='tight')
+    plt.savefig('detailed_analysis_pfam.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 
@@ -694,7 +695,8 @@ def plot_statistical_results(permanova_result, effect_sizes, pairwise_results):
     axes[1, 0].set_ylabel('Frequency')
     
     # 4. 显著成对比较的p值分布
-    sig_p_values = [r['corrected_p'] for r in pairwise_results if r['significant']]
+    # sig_p_values = [r['corrected_p'] for r in pairwise_results if r['significant']]
+    sig_p_values = None
     if sig_p_values:
         axes[1, 1].hist(sig_p_values, bins=20, alpha=0.7, color='salmon', edgecolor='black')
         axes[1, 1].set_title('Distribution of Significant p-values\n(After Multiple Testing Correction)')
@@ -706,17 +708,87 @@ def plot_statistical_results(permanova_result, effect_sizes, pairwise_results):
         axes[1, 1].set_title('No Significant Pairwise Comparisons')
     
     plt.tight_layout()
-    plt.savefig('statistical_analysis_results.png', dpi=300, bbox_inches='tight')
+    plt.savefig('statistical_analysis_results_pfam.png', dpi=300, bbox_inches='tight')
     plt.show()
 
 def main():
     # 加载数据
     # file_path = "data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_emb.pkl"
-    file_path = "data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_cls_emb.pkl"
+    # file_path = "data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_cls_emb.pkl"
     # file_path = "data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_mean_emb.pkl"
     # file_path =  "data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_lfq_mean_emb.pkl"
 
+    file_path = "data-bin/uniprotKB/cfpgen_general_dataset/train_pfam_cls_emb_pfamMotif.pkl"
+
     go_terms_emb = load_embeddings(file_path)
+
+    train_pfam_data = load_embeddings("data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold.pkl")
+
+    go_term_pfam_name_list = []
+
+    for data in train_pfam_data:
+        for pfam in data['pfam_motif']:
+            if len(pfam['strong_go_id']) > 0:
+                if pfam['pfam_id'] not in go_term_pfam_name_list:
+                    go_term_pfam_name_list.append(pfam['pfam_id'])
+
+    print(len(go_term_pfam_name_list))
+
+    go_terms_emb = {key: value for key, value in go_terms_emb.items() if key in go_term_pfam_name_list}
+
+    filtered_go_terms_emb = {}
+
+    for key, value_list in go_terms_emb.items():
+        filtered_values = []
+        for value_set in value_list:
+
+            feature_vector, e_value = value_set 
+            if e_value <= 0.05:
+                filtered_values.append(value_set)
+                # 如果数据结构不同，可以根据实际情况调整
+        
+        # 只有当过滤后还有数据时才保留这个key
+        if filtered_values:
+            filtered_go_terms_emb[key] = filtered_values
+
+    # 使用过滤后的数据
+    go_terms_emb = filtered_go_terms_emb    
+
+    # print(go_terms_emb[list[go_terms_emb.keys()][0]])
+
+    sorted_keys = sorted(go_terms_emb.keys(), 
+                        key=lambda x: len(go_terms_emb[x]), 
+                        reverse=True)[:100]
+
+    sorted_keys = random.choices(sorted_keys, k=10)
+
+    # print(sorted_keys)
+
+    # sorted_keys
+
+    # exit()
+
+
+
+    sub_dataset = {}
+
+    for key in sorted_keys:
+        value_list = go_terms_emb[key]
+        feature_vectors = []
+        
+        # 遍历list中的每个set
+        for value_set in value_list:
+            # 遍历set中的每个tuple
+            feature_vector, e_value = value_set
+            # 只保留特征向量，去掉e-value
+            feature_vectors.append(feature_vector)
+        
+        # 将特征向量列表存入子数据集
+        sub_dataset[key] = feature_vectors
+
+    # exit()
+
+    go_terms_emb = sub_dataset
     
     print(f"总共加载了 {len(go_terms_emb)} 个GO terms")
     

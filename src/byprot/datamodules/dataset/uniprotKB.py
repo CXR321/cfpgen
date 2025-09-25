@@ -242,7 +242,10 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         self.data_dir = data_dir
         self.split = split
         # file_path = os.path.join(self.data_dir.data_dir, self.split+'_expanded.pkl')
-        file_path = os.path.join(self.data_dir.data_dir, self.split+'_data_motif_emb.pkl')
+        # file_path = os.path.join(self.data_dir.data_dir, self.split+'_data_motif_emb_<200.pkl')
+        # file_path = os.path.join(self.data_dir.data_dir, self.split+'_all_old_motif_added.pkl')
+        file_path = os.path.join(self.data_dir.data_dir, self.split+'_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl')
+
         assert os.path.isfile(file_path)
         with open(file_path, 'rb') as f:
             self.indices = pickle.load(f)
@@ -271,10 +274,24 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         struct_tokens = idx["struct_seq"]
 
         motif_mask = idx.get('motif_mask')
+
         motid_struct_emb = idx.get('motif_struct_emb')
 
-        # all is string
-        struct_tokens = struct_tokens.split(",")
+        if idx.get('pfam_emb') is not None:
+            motid_struct_emb = idx.get('pfam_emb')
+
+        if idx.get('pfam_mask') is not None:
+            motif_mask = idx.get('pfam_mask')
+
+        if len(struct_tokens) == 0 or len(struct_tokens.split(",")) != len(aatype_tokens):
+            # struct_tokens = [self.tokenizer.struct_mask_token] * len(aatype_tokens)
+            struct_tokens = ['8000'] * len(aatype_tokens)
+            print(struct_tokens)
+            struct_ignore = True
+        else:
+            # all is string
+            struct_tokens = struct_tokens.split(",")
+            struct_ignore = False
 
         # print(f"name: {idx['uniprot_id']} aatype_tokens: {len(aatype_tokens)} struct_tokens: {len(struct_tokens)} consensus: {len(consensus)}")
         # assert len(aatype_tokens) == len(struct_tokens) == len(consensus)
@@ -292,12 +309,12 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         else:
             motif_start_end = [0, 0]
 
-        if len(consensus) - self.max_len > 0:
-            start = np.random.choice(len(consensus) - self.max_len)
+        if len(aatype_tokens) - self.max_len > 0:
+            start = np.random.choice(len(aatype_tokens) - self.max_len)
             stop = start + self.max_len
         else:
             start = 0
-            stop = len(consensus)
+            stop = len(aatype_tokens)
 
         consensus = consensus[start:stop]
         aatype_tokens = aatype_tokens[start:stop]
@@ -329,7 +346,7 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         # Now consensus not add cls and eos but struct and aa type tokens add
         # assert (len(aatype_tokens)-2*len(self.tokenizer.aa_cls_token)) == ((len(struct_tokens)-2*len(self.tokenizer.struct_cls_token))/4) == (len(consensus))
 
-        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motid_struct_emb
+        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motid_struct_emb, struct_ignore
 
 
 class UniProtKBDatasetForTesting(Dataset):
@@ -557,6 +574,8 @@ class DPLM2Collater(object):
         motif_mask_list = [ele[7] for ele in input_data]
         motif_struct_emb_list = [ele[8] for ele in input_data]
 
+        struct_ignore_list = [ele[9] for ele in input_data]
+
         motif_mask = pad_sequence(motif_mask_list, batch_first=True, padding_value=False)
 
         batch = {
@@ -572,6 +591,12 @@ class DPLM2Collater(object):
 
         batch['motif_mask'] = motif_mask
         batch['motif_struct_emb'] = torch.stack(motif_struct_emb_list)
+
+        batch['struct_ignore'] = torch.tensor(struct_ignore_list)
+
+        # for id, value in enumerate(batch['struct_ignore']):
+        #     if value:
+        #         print(batch['struct_tokens']['targets'][id])
 
         # assert len(batch["struct_tokens"]["targets"][0]) == len(batch["aatype_tokens"]["targets"][0]) == len(batch["input_ids"]) == len(batch["input_mask"][0]) == len(batch["targets"][0])
 

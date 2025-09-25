@@ -160,7 +160,7 @@ def main(data_root, ont, test_predictions):
     print(f'Precision (Micro): {precision_mic:.3f}')
     print(f'Recall (Micro): {recall_mic:.3f}')
 
-    # 计算每个样本的F1分数
+    # # 计算每个样本的F1分数
     # f1_per_sample = []
     # for i in range(len(y_true_binary)):
     #     if np.sum(y_true_binary[i]) == 0 and np.sum(y_pred_binary[i]) == 0:
@@ -179,7 +179,7 @@ def main(data_root, ont, test_predictions):
     #     print(f"Worst F1 sample {worst_idx}: {common_uids[worst_idx]}, Score: {f1_per_sample[worst_idx]}")
     #     print(f"True labels: {gt_list[worst_idx]}")
     #     print(f"Predictions: {pred_list[worst_idx]}")
-        # print(f"True labels: {gt_list[worst_idx]}")
+    #     print(f"True labels: {gt_list[worst_idx]}")
 
 
 

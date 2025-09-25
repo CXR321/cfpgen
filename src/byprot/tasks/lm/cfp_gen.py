@@ -304,6 +304,10 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         logits, target, loss_mask, weights = self.model.compute_loss(
             batch, weighting=weighting)
 
+        # print(f"logits shape: {logits.shape}")
+        # print(f"target shape: {target.shape}")
+        # print(f"loss_mask shape: {loss_mask.shape}")
+
         loss, logging_output = self.criterion(
             logits, target,
             loss_mask,

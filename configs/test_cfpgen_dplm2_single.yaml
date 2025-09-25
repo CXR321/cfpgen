@@ -51,6 +51,9 @@ use_diff_modulation: true
 use_func_cross_attn: true
 use_motif_struct_emb: false
 # use_static_scale
+use_static_scale: false
+
+use_motif_mean: true
 
 
 sampling_strategy: annealing@2.0:1.0

@@ -96,6 +96,7 @@ def generate_single_protein(config_path, uniprot_id, output_fasta_path):
     sequence = target_protein['sequence']
     seq_id = target_protein['uniprot_id']
     seq_len = random.randint(config['seq_lens'][0], config['seq_lens'][1])
+    # seq_len = 250
     device = torch.device("cuda")
     
     # 准备输入
@@ -127,15 +128,29 @@ def generate_single_protein(config_path, uniprot_id, output_fasta_path):
     with open(output_fasta_path, 'w') as f:
         for i, seq in enumerate(output_results):
             seq = seq.replace(" ", "")
-            f.write(f">SEQUENCE_ID={seq_id}_L={seq_len}_sample_{i}\n")
+            f.write(f">SEQUENCE_ID={seq_id}_L={seq_len}_end\n")
             f.write(f"{seq}\n")
 
         for i, history_detail in enumerate(history_details):
-            if i % 50 == 0:
+            if i % 25 == 0:
                 tokens = history_detail['tokens']
                 struct_tokens, aatype_tokens = tokens.chunk(2, dim=-1)
 
-                print(tokens)
+                scores = history_detail['scores']
+                struc_scores, aatype_scores = scores.chunk(2, dim=-1)
+
+
+                aatype_flattened_scores = aatype_scores.flatten()
+                aatype_bottom2_scores = aatype_flattened_scores.topk(min(2 * (i + 1), aatype_flattened_scores.numel()), largest=False)  # largest=False 获取最小值
+                aatype_bottom2_values = aatype_bottom2_scores.values.tolist()
+                aatype_bottom2_values = [f"{score:.1f}" for score in aatype_bottom2_values]
+
+                struc_flattened_scores = struc_scores.flatten()
+                struc_bottom2_scores = struc_flattened_scores.topk(min(2 * (i + 1), struc_flattened_scores.numel()), largest=False)  # largest=False 获取最小值
+                struc_bottom2_values = struc_bottom2_scores.values.tolist()
+                struc_bottom2_values = [f"{score:.1f}" for score in struc_bottom2_values]
+
+                # print(tokens)
                 
                 output_results = list(
                     map(
@@ -149,16 +164,19 @@ def generate_single_protein(config_path, uniprot_id, output_fasta_path):
                 seq = output_results[-1]
                 f.write(f">SEQUENCE_ID={seq_id}_L={seq_len}_sample_{i}_history\n")
                 f.write(f"{seq}\n")
+                f.write(f"# Bottom2_aa_scores: {aatype_bottom2_values}\n")
+                f.write(f"# Bottom2_struct_scores: {struc_bottom2_values}\n")
     
     print(f"Generated sequences for {uniprot_id} saved to {output_fasta_path}")
 
 
 if __name__ == '__main__':
-    os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     # 配置参数
     config_path = 'configs/test_cfpgen_dplm2_single.yaml'
     # input_data_path = 'path/to/your/input_data.pkl'  # 替换为您的输入数据路径
-    output_fasta_path = 'gen_single/generated_sequence.fasta'   # 输出文件路径
-    uniprot_id = 'Q60888'  # 替换为您想要生成的蛋白的UniProt ID
+    uniprot_id = 'A3PN82'  # 替换为您想要生成的蛋白的UniProt ID
+    output_fasta_path = f'gen_single/generated_sequence_{uniprot_id}.fasta'   # 输出文件路径
+    
     
     generate_single_protein(config_path, uniprot_id, output_fasta_path)

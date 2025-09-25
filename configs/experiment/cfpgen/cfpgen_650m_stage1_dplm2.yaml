@@ -35,10 +35,10 @@ model:
 
   rdm_couple: false
   cond:
-    use_go: true
+    use_go: false
     go_num: 375
     go_drop: 0.5
-    use_ipr: true
+    use_ipr: false
     ipr_num: 1154
     ipr_drop: 0.5
     use_ec: false
@@ -71,7 +71,7 @@ model:
     exp_path: airkingbd/struct_tokenizer
 
   use_diff_modulation: true
-  use_func_cross_attn: true
+  use_func_cross_attn: false
   use_diff_ce: false
   use_motif_struct_emb: true
   use_static_scale: true

@@ -13,14 +13,14 @@ import numpy as np
 
 # Login using e.g. `huggingface-cli login` to access this dataset
 
-with open("data-bin/uniprotKB/cfpgen_general_dataset/train_expanded.pkl", "rb") as f:
-    train_data_expanded = pickle.load(f)
+# with open("data-bin/uniprotKB/cfpgen_general_dataset/train_expanded.pkl", "rb") as f:
+#     train_data_expanded = pickle.load(f)
 
-with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "rb") as f:
-    valid_data_expanded = pickle.load(f)
+# with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_expanded.pkl", "rb") as f:
+#     valid_data_expanded = pickle.load(f)
 
-with open("data-bin/uniprotKB/cfpgen_general_dataset/test.pkl", "rb") as f:
-    test_data = pickle.load(f)
+# with open("data-bin/uniprotKB/cfpgen_general_dataset/test.pkl", "rb") as f:
+#     test_data = pickle.load(f)
 
 # test = train_data_expanded[0]
 # print(test)
@@ -42,24 +42,31 @@ with open("data-bin/uniprotKB/cfpgen_general_dataset/test.pkl", "rb") as f:
 
 # print(train_data_expanded[1])
 
-cls_emb = load_embeddings("data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_cls_emb.pkl")
+# cls_emb = load_embeddings("data-bin/uniprotKB/cfpgen_general_dataset/train_go_terms_cls_emb.pkl")
 
-def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
-    """在 aa_seq 中查找 motif_segment 的准确位置"""
-    index = aa_seq.find(motif_segment)
-    if index == -1:
-        print(f"❌ Motif segment {motif_segment} not found in aa_seq!")
-        print(f"aa_seq: {aa_seq}")
-        print(f"seq: {seq}")
-        print(f"name: {name}")
+# def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
+#     """在 aa_seq 中查找 motif_segment 的准确位置"""
+#     index = aa_seq.find(motif_segment)
+#     if index == -1:
+#         print(f"❌ Motif segment {motif_segment} not found in aa_seq!")
+#         print(f"aa_seq: {aa_seq}")
+#         print(f"seq: {seq}")
+#         print(f"name: {name}")
 
-        # raise ValueError("❌ Motif segment not found in aa_seq!")
-        return None, None
-    return index, index + len(motif_segment) - 1  # 返回 start, end (0-based)
+#         # raise ValueError("❌ Motif segment not found in aa_seq!")
+#         return None, None
+#     return index, index + len(motif_segment) - 1  # 返回 start, end (0-based)
 
 
-# train_data_motif_emb = []
-# for data in train_data_expanded:
+# motif_length_max = 200
+
+# with open("data-bin/uniprotKB/cfpgen_general_dataset/train_data_motif_emb.pkl", "rb") as f:
+#     train_data_motif_emb = pickle.load(f)
+
+# # train_data_motif_emb = []
+# # for data in train_data_expanded:
+
+# for id, data in enumerate(tqdm(train_data_motif_emb)):
 
 #     aa_seq = data['aa_seq']
 #     struct_seq = data['struct_seq'].split(',')
@@ -80,30 +87,40 @@ def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
 
 #         # 提取 struct_seq 对应位置的 tokens
 #         # struct_tokens = struct_seq[start : end + 1]  # Python 切片是 [start, end+1)
+
+#         if (end - start + 1) >= motif_length_max:
+#             continue 
+
 #         motif_mask[start:end+1] = True
 
 #         # print(f"✅ Motif segment found at aa_seq positions: {start+1}-{end+1} (1-based)")
 #         # print(f"Extracted {len(struct_tokens)} struct tokens:")
 #         # print(struct_tokens[:10], "...", struct_tokens[-10:])  # 显示前10和后10个 token
-#         try:
-#             numpy_array = np.array(cls_emb[motif_info['go_term']])
-#             motif_struct_emb[motif_num] = torch.mean(torch.from_numpy(numpy_array), dim=0)
+#         # try:
+#         #     numpy_array = np.array(cls_emb[motif_info['go_term']])
+#         #     motif_struct_emb[motif_num] = torch.mean(torch.from_numpy(numpy_array), dim=0)
 
-#             motif_num += 1
-#         except Exception as e:
-#             print(e)
-#             print(f"❌ {motif_info['go_term']} not found in cls_emb")
+#         #     motif_num += 1
+#         # except Exception as e:
+#         #     print(e)
+#         #     print(f"❌ {motif_info['go_term']} not found in cls_emb")
 
-#     data['motif_mask'] = motif_mask
-#     data['motif_struct_emb'] = motif_struct_emb
-#     train_data_motif_emb.append(data)
+#     # data['motif_mask'] = motif_mask
+#     # data['motif_struct_emb'] = motif_struct_emb
+#     # train_data_motif_emb.append(data)
+#     train_data_motif_emb[id]['motif_mask'] = motif_mask
 
-# with open("data-bin/uniprotKB/cfpgen_general_dataset/train_data_motif_emb.pkl", "wb") as f:
+# with open(f"data-bin/uniprotKB/cfpgen_general_dataset/train_data_motif_emb_<{motif_length_max}.pkl", "wb") as f:
 #     pickle.dump(train_data_motif_emb, f)
 #     # print(f"motif_num: {terms} {motif_info['go_term']}: {struct_tokens} {data['uniprot_id']} {aa_seq[start:end+1]}")
 
-# valid_data_motif_emb = []
-# for data in valid_data_expanded:
+# with open(f"data-bin/uniprotKB/cfpgen_general_dataset/valid_data_motif_emb.pkl", "rb") as f:
+#     valid_data_motif_emb = pickle.load(f)
+
+# # valid_data_motif_emb = []
+# # for data in valid_data_expanded:
+
+# for id, data in enumerate(tqdm(valid_data_motif_emb)):
 
 #     aa_seq = data['aa_seq']
 #     struct_seq = data['struct_seq'].split(',')
@@ -124,7 +141,55 @@ def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
 
 #         # 提取 struct_seq 对应位置的 tokens
 #         # struct_tokens = struct_seq[start : end + 1]  # Python 切片是 [start, end+1)
+#         if (end - start + 1) >= motif_length_max:
+#             continue
+
 #         motif_mask[start:end+1] = True
+
+#         # print(f"✅ Motif segment found at aa_seq positions: {start+1}-{end+1} (1-based)")
+#         # print(f"Extracted {len(struct_tokens)} struct tokens:")
+#         # print(struct_tokens[:10], "...", struct_tokens[-10:])  # 显示前10和后10个 token
+#         # try:
+#         #     numpy_array = np.array(cls_emb[motif_info['go_term']])
+#         #     motif_struct_emb[motif_num] = torch.mean(torch.from_numpy(numpy_array), dim=0)
+
+#         #     motif_num += 1
+#         # except Exception as e:
+#         #     print(e)
+#         #     print(f"❌ {motif_info['go_term']} not found in cls_emb")
+
+#     # data['motif_mask'] = motif_mask
+#     # data['motif_struct_emb'] = motif_struct_emb
+#     # valid_data_motif_emb.append(data)
+#     valid_data_motif_emb[id]['motif_mask'] = motif_mask
+#     # valid_data_motif_emb[id]['motif_struct_emb'] = motif_struct_emb
+
+# with open(f"data-bin/uniprotKB/cfpgen_general_dataset/valid_data_motif_emb_<{motif_length_max}.pkl", "wb") as f:
+#     pickle.dump(valid_data_motif_emb, f)
+
+# test_data_motif_emb = []
+# for data in test_data:
+
+#     # aa_seq = data['aa_seq']
+#     # struct_seq = data['struct_seq'].split(',')
+
+#     motif_num = 0
+#     # motif_mask = torch.zeros(len(aa_seq), dtype=torch.bool)
+
+#     motif_struct_emb = torch.zeros(7, 1280, dtype=torch.float32)
+
+#     for motif_info in data['motif']:
+        
+#         # motif_segment = motif_info['motif_segment']
+#         # # 重新计算 motif 在 aa_seq 中的位置
+#         # start, end = find_motif_in_aa_seq(aa_seq, motif_segment, data['sequence'], data['uniprot_id'])
+
+#         # if start is None:
+#         #     continue
+
+#         # # 提取 struct_seq 对应位置的 tokens
+#         # # struct_tokens = struct_seq[start : end + 1]  # Python 切片是 [start, end+1)
+#         # motif_mask[start:end+1] = True
 
 #         # print(f"✅ Motif segment found at aa_seq positions: {start+1}-{end+1} (1-based)")
 #         # print(f"Extracted {len(struct_tokens)} struct tokens:")
@@ -135,58 +200,15 @@ def find_motif_in_aa_seq(aa_seq, motif_segment, seq, name):
 
 #             motif_num += 1
 #         except Exception as e:
-#             print(e)
+#             # print(e)
 #             print(f"❌ {motif_info['go_term']} not found in cls_emb")
 
-#     data['motif_mask'] = motif_mask
+#     data['motif_mask'] = None
 #     data['motif_struct_emb'] = motif_struct_emb
-#     valid_data_motif_emb.append(data)
+#     test_data_motif_emb.append(data)
 
-# with open("data-bin/uniprotKB/cfpgen_general_dataset/valid_data_motif_emb.pkl", "wb") as f:
-#     pickle.dump(valid_data_motif_emb, f)
-
-test_data_motif_emb = []
-for data in test_data:
-
-    # aa_seq = data['aa_seq']
-    # struct_seq = data['struct_seq'].split(',')
-
-    motif_num = 0
-    # motif_mask = torch.zeros(len(aa_seq), dtype=torch.bool)
-
-    motif_struct_emb = torch.zeros(7, 1280, dtype=torch.float32)
-
-    for motif_info in data['motif']:
-        
-        # motif_segment = motif_info['motif_segment']
-        # # 重新计算 motif 在 aa_seq 中的位置
-        # start, end = find_motif_in_aa_seq(aa_seq, motif_segment, data['sequence'], data['uniprot_id'])
-
-        # if start is None:
-        #     continue
-
-        # # 提取 struct_seq 对应位置的 tokens
-        # # struct_tokens = struct_seq[start : end + 1]  # Python 切片是 [start, end+1)
-        # motif_mask[start:end+1] = True
-
-        # print(f"✅ Motif segment found at aa_seq positions: {start+1}-{end+1} (1-based)")
-        # print(f"Extracted {len(struct_tokens)} struct tokens:")
-        # print(struct_tokens[:10], "...", struct_tokens[-10:])  # 显示前10和后10个 token
-        try:
-            numpy_array = np.array(cls_emb[motif_info['go_term']])
-            motif_struct_emb[motif_num] = torch.mean(torch.from_numpy(numpy_array), dim=0)
-
-            motif_num += 1
-        except Exception as e:
-            # print(e)
-            print(f"❌ {motif_info['go_term']} not found in cls_emb")
-
-    data['motif_mask'] = None
-    data['motif_struct_emb'] = motif_struct_emb
-    test_data_motif_emb.append(data)
-
-with open("data-bin/uniprotKB/cfpgen_general_dataset/test_data_motif_emb.pkl", "wb") as f:
-    pickle.dump(test_data_motif_emb, f)
+# with open("data-bin/uniprotKB/cfpgen_general_dataset/test_data_motif_emb.pkl", "wb") as f:
+#     pickle.dump(test_data_motif_emb, f)
 
 
 exit()
@@ -201,12 +223,12 @@ swiss_train = swiss_prot["train"]
 
 print(swiss_train[0])
 
-# pdb_map = {}
-# for entry in swiss_train:
-#     pdb_name = entry["pdb_name"]
-#     if pdb_name.startswith("AF-") and "-model_v" in pdb_name:
-#         uniprot_id = pdb_name.split("-")[1]  # "AF-Q60888-model_v4" -> "Q60888"
-#         pdb_map[uniprot_id] = pdb_name
+pdb_map = {}
+for entry in swiss_train:
+    pdb_name = entry["pdb_name"]
+    if pdb_name.startswith("AF-") and "-model_v" in pdb_name:
+        uniprot_id = pdb_name.split("-")[1]  # "AF-Q60888-model_v4" -> "Q60888"
+        pdb_map[uniprot_id] = pdb_name
 
 # 构建 swiss_train 的索引：{uniprot_id: entry}
 swiss_index = {}

@@ -96,6 +96,8 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
     motif_struct_emb = None
     if config.get('use_motif_struct_emb', False):
         motif_struct_emb = sample['motif_struct_emb']
+        if sample.get('pfam_emb', None) is not None:
+            motif_struct_emb = sample['pfam_emb']
         # print(motif_struct_emb.shape)
         # exit()
         if motif_struct_emb is None:
@@ -173,7 +175,11 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
         out_batch['seq_cond'] = seq_cond
 
     if config.get('use_motif_struct_emb', False):
-        out_batch['motif_struct_emb'] = torch.stack([motif_struct_emb for _ in range(config['num_seqs'])]).mean(dim=1)
+        # out_batch['motif_struct_emb'] = torch.stack([motif_struct_emb for _ in range(config['num_seqs'])]).mean(dim=1)
+        if config.get('use_motif_mean', False):
+            out_batch['motif_struct_emb'] = torch.stack([motif_struct_emb for _ in range(config['num_seqs'])]).mean(dim=1)
+        else:
+            out_batch['motif_struct_emb'] = torch.stack([motif_struct_emb for _ in range(config['num_seqs'])])
 
     return utils.recursive_to(out_batch, device)
 
@@ -201,6 +207,7 @@ def split_data_sequentially(data, num_splits):
 def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
     try:
         print(f"Starting processing on GPU {gpu_idx} with {len(part_data)} sequences...")
+        print(f"use motif mean: {config['use_motif_mean']}")
 
         model = CondDiffusionProteinLanguageModel2.from_pretrained(config['ckpt_path'])
         model = model.eval().cuda(gpu_idx)
