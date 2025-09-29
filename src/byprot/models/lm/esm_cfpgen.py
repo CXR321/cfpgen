@@ -783,8 +783,19 @@ class AGFMLayerDPLM2(nn.Module):
         struct_mask = torch.zeros_like(attention_output)
         struct_mask[:, :n_half, :] = 1  # 前半部分为1，后半部分为0
 
+        # if self.use_func_cross_attn:
+        #     attention_output = attention_output + self.cross_res_scale * cross_out * struct_mask
+        # if self.use_motif_struct_emb:
+            
+        #     # print(f"motif_cross_out: {motif_cross_out.shape}, struct_mask: {struct_mask.shape}")
+        #     # print(motif_cross_out)
+        #     # print(attention_output)
+        #     # exit()
+
+        #     attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out * struct_mask
+
         if self.use_func_cross_attn:
-            attention_output = attention_output + self.cross_res_scale * cross_out * struct_mask
+            attention_output = attention_output + self.cross_res_scale * cross_out
         if self.use_motif_struct_emb:
             
             # print(f"motif_cross_out: {motif_cross_out.shape}, struct_mask: {struct_mask.shape}")
@@ -792,7 +803,8 @@ class AGFMLayerDPLM2(nn.Module):
             # print(attention_output)
             # exit()
 
-            attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out * struct_mask
+            attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out
+
 
         # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
         attention_output_ln = self.LayerNorm(attention_output)
