@@ -11,6 +11,7 @@ from get_emb_cal import load_embeddings
 from get_emb import find_pfam_in_aaseq, find_motif_in_aa_seq
 import torch
 import numpy as np
+from motif_search_web import parse_pfam2go_id2go
 
 
 def get_ori_all_data():
@@ -201,6 +202,38 @@ def load_pfam_emb_data():
     return filtered_go_terms_emb
     return pfam_data
 
+def load_pfam_emb_data_goterm():
+    with open(f"data-bin/uniprotKB/cfpgen_general_dataset/train_pfam_cls_emb_pfamMotif.pkl", "rb") as f:
+        pfam_data = pickle.load(f)
+
+    pfamid2gomap = parse_pfam2go_id2go()
+
+    filtered_go_terms_emb = {}
+
+    for key, value_list in pfam_data.items():
+        filtered_values = []
+        for value_set in value_list:
+
+            feature_vector, e_value = value_set 
+            if e_value <= 0.05:
+                filtered_values.append(torch.tensor(feature_vector))
+                # 如果数据结构不同，可以根据实际情况调整
+        
+        # 只有当过滤后还有数据时才保留这个key
+        if filtered_values:
+            filtered_go_terms_emb[key] = filtered_values
+
+    go_id2pfam_emb = {}
+
+    for key, value in filtered_go_terms_emb.items():
+        go_ids = pfamid2gomap.get(key, [])
+        for go_id, go_desc in go_ids:
+            if go_id not in go_id2pfam_emb:
+                go_id2pfam_emb[go_id] = []
+            go_id2pfam_emb[go_id].extend(value)
+    
+    return go_id2pfam_emb
+
 def load_test_data_motif_emb():
     with open(f"data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif.pkl", "rb") as f:
         test_data = pickle.load(f)
@@ -297,6 +330,7 @@ def load_pfam_emb():
     test_data = load_test_data_motif_emb()
 
     pfam_data = load_pfam_emb_data()
+    pfam_data_go = load_pfam_emb_data_goterm()
 
     def analyze_pfam_coverage(data):
         """
@@ -314,6 +348,11 @@ def load_pfam_emb():
                 if pfam['evalue'] < 0.05:
                     # 收集该pfam的strong_go_id
                     if 'strong_go_id' in pfam:
+
+                        go_ids_set = set(pfam['strong_go_id'])
+
+                        if not go_ids_set.issubset(target_go_f) or len(go_ids_set) == 0:
+                            continue
 
                         s, e = find_pfam_in_aaseq(data['aa_seq'], data['sequence'], pfam['start'], pfam['end'])
 
@@ -402,14 +441,72 @@ def load_pfam_emb():
                 new_data.append(data)
         return new_data  
 
-    new_train = add_pfam_emb(train_data, pfam_data)
+    def add_pfam_emb_go(all_data, pfam_emb_go):
+        new_data = []
+        for data in all_data:
+            res = analyze_pfam_coverage(data)
+            if res['is_fully_covered']:
+                # 完全覆盖，直接添加pfam_emb
+                aa_seq = data['aa_seq']
+                motif_num = 0
+
+                motif_mask = torch.zeros(len(aa_seq), dtype=torch.bool)
+
+                motif_struct_emb = torch.zeros(7, 1280, dtype=torch.float32)
+
+                pfam_position_s = []
+                pfam_position_e = []
+
+                for pfam in res['significant_pfams']:
+                    s, e = pfam['aa_s'], pfam['aa_e']
+                    motif_mask[s:e] = True
+
+                    pfam_position_s.append(s)
+                    pfam_position_e.append(e)
+
+                for go_id in data['go_numbers']['F']:
+                    motif_struct_emb[motif_num] = torch.stack(pfam_emb_go[go_id]).mean(dim=0)
+                    motif_num += 1
+                    if motif_num == 7:
+                        break
+
+
+                data['pfam_mask'] = motif_mask
+                data['pfam_emb'] = motif_struct_emb
+                data['pfam_position_s'] = pfam_position_s
+                data['pfam_position_e'] = pfam_position_e
+
+                if motif_num == 0:
+                    data['pfam_emb'] = None
+                    data['pfam_mask'] = None
+
+                new_data.append(data)
+            else:
+                # 不完整，添加None
+                data['pfam_emb'] = None
+                data['pfam_mask'] = None
+                new_data.append(data)
+        return new_data  
+
+    # new_train = add_pfam_emb(train_data, pfam_data)
+    # save_all_pfam_emb_data("train", new_train)
+
+    # new_valid = add_pfam_emb(valid_data, pfam_data)
+    # save_all_pfam_emb_data("valid", new_valid)
+
+    # new_test = add_pfam_emb(test_data, pfam_data)
+    # save_all_pfam_emb_data("test", new_test)
+
+    new_train = add_pfam_emb_go(train_data, pfam_data_go)
     save_all_pfam_emb_data("train", new_train)
 
-    new_valid = add_pfam_emb(valid_data, pfam_data)
+    new_valid = add_pfam_emb_go(valid_data, pfam_data_go)
     save_all_pfam_emb_data("valid", new_valid)
 
-    new_test = add_pfam_emb(test_data, pfam_data)
+    new_test = add_pfam_emb_go(test_data, pfam_data_go)
     save_all_pfam_emb_data("test", new_test)
+
+    print(new_test[0])
 
 def load_motif_segment_mask_data():
 
@@ -474,8 +571,8 @@ def load_motif_segment_mask_data():
 
 if __name__ == "__main__":
     # load_struct_token()
-    # load_pfam_emb()
-    load_motif_segment_mask_data()
+    load_pfam_emb()
+    # load_motif_segment_mask_data()
 
 # d = load_all_motif_data("train")
 # d = load_all_pfam_data("train")

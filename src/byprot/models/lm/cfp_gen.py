@@ -1220,9 +1220,12 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
             scale_alpha = 0.5
 
+            max_alpha = 0.15
+            times_gama = 3
+
             # 结构权重计算（基于struct_t）
             struct_time_factor = (struct_t - 1) / (num_timesteps)  # 归一化到[0,1]
-            struct_motif_weight_coeff = scale_alpha * (1.05 - (0.05 * torch.exp(-1.0 * struct_time_factor)))
+            struct_motif_weight_coeff = scale_alpha * (1 + max_alpha - (max_alpha * torch.exp(-times_gama * struct_time_factor)))
             struct_motif_weight_coeff = struct_motif_weight_coeff[:, None].expand(-1, motif_mask.shape[1])
 
             # print(f"motif_mask: {motif_mask.shape}, struct_motif_weight_coeff: {struct_motif_weight_coeff.shape}, struct_weight: {struct_weight.shape}")
@@ -1235,7 +1238,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
             # 氨基酸类型权重计算（基于aatype_t）
             aatype_time_factor = (aatype_t - 1) / (num_timesteps)  # 归一化到[0,1]
-            aatype_motif_weight_coeff = scale_alpha * (1.05 - (0.05 * torch.exp(-1.0 * aatype_time_factor)))
+            aatype_motif_weight_coeff = scale_alpha * (1 + max_alpha - (max_alpha * torch.exp(-times_gama * aatype_time_factor)))
             aatype_motif_weight_coeff = aatype_motif_weight_coeff[:, None].expand(-1, motif_mask.shape[1])
             # 应用氨基酸类型motif权重
             aatype_weight_coeff = torch.where(~motif_mask, aatype_motif_weight_coeff, scale_alpha)

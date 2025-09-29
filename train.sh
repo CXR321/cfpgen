@@ -19,7 +19,9 @@ exp=cfpgen/cfpgen_650m_stage1_dplm2
 # model_name=cfpgen_general_dataset_stage1_dplm2_dm_ca_dc_me_wandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_dc-0.05_mf_cf_wandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_dm_ca_dc_pow2weight_wandb
-model_name=cfpgen_general_dataset_stage1_dplm2_motifonly
+# model_name=cfpgen_general_dataset_stage1_dplm2_motifonly
+
+model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_dc-0.15-30_me_mf_cf_wandb
 # model_name=debug
 
 

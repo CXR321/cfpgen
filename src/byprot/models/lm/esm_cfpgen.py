@@ -746,6 +746,7 @@ class AGFMLayerDPLM2(nn.Module):
                                 key_padding_mask=valid_mask
                             )
                             # print(f"valid_out: {valid_out.shape}")
+                            # print(f"valid_out: {valid_out.shape} {valid_out}")
 
                             motif_cross_out = torch.zeros_like(q, dtype=valid_out.dtype)
                             # valid_indices = torch.where(~all_motif_dropped)[0]
@@ -785,6 +786,12 @@ class AGFMLayerDPLM2(nn.Module):
         if self.use_func_cross_attn:
             attention_output = attention_output + self.cross_res_scale * cross_out * struct_mask
         if self.use_motif_struct_emb:
+            
+            # print(f"motif_cross_out: {motif_cross_out.shape}, struct_mask: {struct_mask.shape}")
+            # print(motif_cross_out)
+            # print(attention_output)
+            # exit()
+
             attention_output = attention_output + self.motif_cross_res_scale * motif_cross_out * struct_mask
 
         # feed_forward_chunk: layer_norm->linear(5120)->linear(1280)
@@ -1227,6 +1234,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                         encoder_attention_mask,
                         past_key_value,
                         output_attentions,
+                        anno_embed,
                         type_ids,
                         motif_struct_emb,
                     )

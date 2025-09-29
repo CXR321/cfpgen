@@ -305,7 +305,7 @@ class UniProtKB_DPLM2_Dataset(Dataset):
 
         
 
-        if len(struct_tokens) == 0 or (idx.get("esmfold_plddt", None) is not None and idx.get("esmfold_plddt") < 0.8):
+        if len(struct_tokens) == 0 or (idx.get("esmfold_plddt", None) is not None and (idx.get("esmfold_plddt") < 0.8 or len(struct_tokens) != len(aatype_tokens))):
             # struct_tokens = [self.tokenizer.struct_mask_token] * len(aatype_tokens)
             struct_tokens = ['8000'] * len(aatype_tokens)
             print(struct_tokens)

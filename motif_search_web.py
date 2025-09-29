@@ -395,6 +395,47 @@ def parse_pfam2go(filename="pfam2go.txt"):
             
     return pfam2go_map
 
+def parse_pfam2go_id2go(filename="pfam2go.txt"):
+    """
+    解析 pfam2go 文件，返回一个映射字典。
+    
+    Args:
+        filename (str): pfam2go 文件的路径
+        
+    Returns:
+        dict: 一个字典，格式为 {pfam_id: [(go_id, go_term)]}
+    """
+    pfam2go_map = {}
+    
+    with open(filename, 'r') as file:
+        for line in file:
+            line = line.strip()
+            # 跳过注释行和空行
+            if line.startswith('!') or not line:
+                continue
+                
+            # 解析一行
+            # 示例: Pfam:7tm_1 PF00001 > GO:G protein-coupled receptor activity ; GO:0004930
+            parts = line.split(' > ')
+            if len(parts) < 2:
+                continue
+                
+            # 提取 Pfam 部分
+            pfam_section = parts[0].split()
+            pfam_acc = pfam_section[0][5:] # 获取 7tm_1
+                
+            # 提取 GO 部分
+            go_section = parts[1].split(' ; ')
+            go_desc = go_section[0][3:]  # 移除前面的 "GO:"，获取描述
+            go_id = go_section[1]        # 获取 GO:0004930
+            
+            # 将映射添加到字典中
+            if pfam_acc not in pfam2go_map:
+                pfam2go_map[pfam_acc] = []
+            pfam2go_map[pfam_acc].append((go_id, go_desc))
+            
+    return pfam2go_map
+
 
 def data_build_pfam_motif(file_path):
     with open(file_path, "rb") as f:

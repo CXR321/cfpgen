@@ -5,6 +5,7 @@ import pickle
 import random
 from torch.cuda.amp import autocast
 import os
+from cfpgen_dplm2_generate import get_initial
 
 def set_seed(seed):
     random.seed(seed)
@@ -12,53 +13,53 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-def get_initial(config, model, sample, length, tokenizer, device, sequence):
-    go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
-    ipr_labels = sample['ipr_mapped']
-    ec_labels = sample.get('EC_mapped', None)
+# def get_initial(config, model, sample, length, tokenizer, device, sequence):
+#     go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
+#     ipr_labels = sample['ipr_mapped']
+#     ec_labels = sample.get('EC_mapped', None)
 
-    seq_struct = tokenizer.all_tokens[50] * length
-    seq_aa = "A" * length
-    seq_struct = (
-        tokenizer.struct_cls_token
-        + seq_struct
-        + tokenizer.struct_eos_token
-    )
-    seq_aa = tokenizer.aa_cls_token + seq_aa + tokenizer.aa_eos_token
+#     seq_struct = tokenizer.all_tokens[50] * length
+#     seq_aa = "A" * length
+#     seq_struct = (
+#         tokenizer.struct_cls_token
+#         + seq_struct
+#         + tokenizer.struct_eos_token
+#     )
+#     seq_aa = tokenizer.aa_cls_token + seq_aa + tokenizer.aa_eos_token
     
-    batch_struct = tokenizer.batch_encode_plus(
-        [seq_struct],
-        add_special_tokens=False,
-        padding="longest",
-        return_tensors="pt",
-    )
+#     batch_struct = tokenizer.batch_encode_plus(
+#         [seq_struct],
+#         add_special_tokens=False,
+#         padding="longest",
+#         return_tensors="pt",
+#     )
 
-    batch_aatype = tokenizer.batch_encode_plus(
-        [seq_aa],
-        add_special_tokens=False,
-        padding="longest",
-        return_tensors="pt",
-    )
+#     batch_aatype = tokenizer.batch_encode_plus(
+#         [seq_aa],
+#         add_special_tokens=False,
+#         padding="longest",
+#         return_tensors="pt",
+#     )
 
-    input_tokens = torch.concat(
-        [batch_struct["input_ids"], batch_aatype["input_ids"]], dim=1
-    )
-    input_tokens = input_tokens.to(device)
+#     input_tokens = torch.concat(
+#         [batch_struct["input_ids"], batch_aatype["input_ids"]], dim=1
+#     )
+#     input_tokens = input_tokens.to(device)
 
-    out_batch = {
-        'input_ids': input_tokens,
-    }
+#     out_batch = {
+#         'input_ids': input_tokens,
+#     }
 
-    if config.get('use_go', False) and len(go_labels):
-        out_batch['go_label'] = torch.tensor(go_labels).to(device)
+#     if config.get('use_go', False) and len(go_labels):
+#         out_batch['go_label'] = torch.tensor(go_labels).to(device)
 
-    if config.get('use_ipr', False) and len(ipr_labels):
-        out_batch['ipr_label'] = torch.tensor(ipr_labels).to(device)
+#     if config.get('use_ipr', False) and len(ipr_labels):
+#         out_batch['ipr_label'] = torch.tensor(ipr_labels).to(device)
 
-    if config.get('use_ec', False) and len(ec_labels):
-        out_batch['ec_label'] = torch.tensor(ec_labels).to(device)
+#     if config.get('use_ec', False) and len(ec_labels):
+#         out_batch['ec_label'] = torch.tensor(ec_labels).to(device)
 
-    return out_batch
+#     return out_batch
 
 def load_config(config_path):
     with open(config_path, 'r') as file:
@@ -175,7 +176,9 @@ if __name__ == '__main__':
     # 配置参数
     config_path = 'configs/test_cfpgen_dplm2_single.yaml'
     # input_data_path = 'path/to/your/input_data.pkl'  # 替换为您的输入数据路径
-    uniprot_id = 'A3PN82'  # 替换为您想要生成的蛋白的UniProt ID
+    uniprot_id = 'P29216' 
+    uniprot_id = 'B9MDS3' 
+    uniprot_id = 'Q7SXV9' 
     output_fasta_path = f'gen_single/generated_sequence_{uniprot_id}.fasta'   # 输出文件路径
     
     

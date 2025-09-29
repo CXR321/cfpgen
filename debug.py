@@ -89,19 +89,25 @@ path = "data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamM
 # path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold.pkl"
 path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif.pkl"
 path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl"
+# path = "data-bin/uniprotKB/cfpgen_general_dataset/valid_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl"
 # path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold.pkl"
 
 
-with open(path, "rb") as f:
-    data = pickle.load(f)
+# with open(path, "rb") as f:
+#     data = pickle.load(f)
 
-print(len(data))
-n = 0
-for meta in data:
-    # if meta.get('pfam_motif', None) is None:
-    # print(meta)
-    if meta.get('esmfold_plddt',None) is not None:
-
-        print(meta)
+# print(len(data))
+# n = 0
+# for meta in data:
+#     # if meta.get('pfam_motif', None) is None:
+#     # print(meta)
+#     if len(meta['struct_seq'].split(',')) != len(meta['aa_seq']) and len(meta['struct_seq'])!=0 and meta.get("esmfold_plddt") is None:
+#         n+=1
+#         # print(meta)
         
-print(n)
+# print(n)
+
+a = []
+
+a.extend([1,2,3])
+print(a)

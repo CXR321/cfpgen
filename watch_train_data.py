@@ -2,6 +2,7 @@ import pickle
 import matplotlib.pyplot as plt
 import numpy as np
 from sympy import intersection
+import random
 
 # exit()
 
@@ -133,6 +134,8 @@ if __name__ == '__main__':
     path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added.pkl"
     path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif.pkl"
 
+    path = "data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl"
+
     with open(path, "rb") as f:
         train_data = pickle.load(f)
 
@@ -144,7 +147,7 @@ if __name__ == '__main__':
     print(f"包含GO注释motif的蛋白质数量: {stats['proteins_with_go_motif']}")
 
     # print(train_data[0])
-    exit()
+    # exit()
     # function_name = "GO:0003723"
     function_name = "GO:0000034"
     function_name = "GO:0046789"
@@ -152,10 +155,18 @@ if __name__ == '__main__':
 
     match_pdb = []
 
+    random.seed(42)
+
+    # for pdb in train_data:
+    #     if function_name in pdb["go_numbers"]['F']:
+    #         match_pdb.append(pdb)
+
     for pdb in train_data:
-        if function_name in pdb["go_numbers"]['F']:
+        if pdb.get("pfam_emb", None) is not None:
             match_pdb.append(pdb)
 
-    print(match_pdb[:1])
+    random_samples = random.sample(match_pdb, min(10, len(match_pdb)))
+    for i, sample in enumerate(random_samples):
+        print(f"样本 {i+1}: {sample}")
     print("============================")
-    print(train_data[0])
+    # print(train_data[0])
