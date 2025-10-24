@@ -287,20 +287,20 @@ class UniProtKB_DPLM2_Dataset(Dataset):
 
         motif_struct_emb = idx.get('motif_struct_emb')
 
-        if idx.get('pfam_emb') is not None:
-            motif_struct_emb = idx.get('pfam_emb')
+        # if idx.get('pfam_emb') is not None:
+        #     motif_struct_emb = idx.get('pfam_emb')
 
-        if idx.get('pfam_mask') is not None:
-            motif_mask = idx.get('pfam_mask')
+        # if idx.get('pfam_mask') is not None:
+        #     motif_mask = idx.get('pfam_mask')
 
-            motif_mask = torch.zeros(len(motif_mask), dtype=torch.bool)
-            for s, e in zip(idx['pfam_position_s'], idx['pfam_position_e']):
-                if e - s + 1 > 30:
-                    random_s = np.random.randint(s, e - 29)
-                    random_e = random_s + 30
-                    motif_mask[random_s:random_e+1] = True
-                else:
-                    motif_mask[s:e+1] = True
+        #     motif_mask = torch.zeros(len(motif_mask), dtype=torch.bool)
+        #     for s, e in zip(idx['pfam_position_s'], idx['pfam_position_e']):
+        #         if e - s + 1 > 30:
+        #             random_s = np.random.randint(s, e - 29)
+        #             random_e = random_s + 30
+        #             motif_mask[random_s:random_e+1] = True
+        #         else:
+        #             motif_mask[s:e+1] = True
 
 
         
@@ -308,7 +308,7 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         if len(struct_tokens) == 0 or (idx.get("esmfold_plddt", None) is not None and (idx.get("esmfold_plddt") < 0.8 or len(struct_tokens) != len(aatype_tokens))):
             # struct_tokens = [self.tokenizer.struct_mask_token] * len(aatype_tokens)
             struct_tokens = ['8000'] * len(aatype_tokens)
-            print(struct_tokens)
+            # print(struct_tokens)
             struct_ignore = True
         else:
             # all is string
@@ -363,12 +363,17 @@ class UniProtKB_DPLM2_Dataset(Dataset):
             )
         )
 
+        motif_position_and_label = {}
+
+        for s, e, label in zip(idx.get('motif_position_s', []), idx.get('motif_position_e', []), idx.get('motif_go_number', [])):
+            motif_position_and_label[(s, e)] = label
+
 
 
         # Now consensus not add cls and eos but struct and aa type tokens add
         # assert (len(aatype_tokens)-2*len(self.tokenizer.aa_cls_token)) == ((len(struct_tokens)-2*len(self.tokenizer.struct_cls_token))/4) == (len(consensus))
 
-        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motif_struct_emb, struct_ignore
+        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motif_struct_emb, struct_ignore, motif_position_and_label
 
 
 class UniProtKBDatasetForTesting(Dataset):
@@ -598,6 +603,8 @@ class DPLM2Collater(object):
 
         struct_ignore_list = [ele[9] for ele in input_data]
 
+        motif_position_and_label_list = [ele[10] for ele in input_data]
+
         motif_mask = pad_sequence(motif_mask_list, batch_first=True, padding_value=False)
 
         batch = {
@@ -615,6 +622,8 @@ class DPLM2Collater(object):
         batch['motif_struct_emb'] = torch.stack(motif_struct_emb_list)
 
         batch['struct_ignore'] = torch.tensor(struct_ignore_list)
+
+        batch['motif_position_and_label'] = motif_position_and_label_list
 
         # for id, value in enumerate(batch['struct_ignore']):
         #     if value:

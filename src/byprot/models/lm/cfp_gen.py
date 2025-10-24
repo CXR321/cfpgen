@@ -1188,6 +1188,8 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             )
 
         struct_logits, aatype_logits = model_outputs["logits"].chunk(2, dim=1)
+        struct_hidden_state, aatype_hidden_state = model_outputs["last_hidden_state"].chunk(2, dim=1)
+
         num_timesteps = self.cfg.num_diffusion_timesteps
         struct_weight = {
             "linear": (
@@ -1196,6 +1198,13 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             "constant": num_timesteps * torch.ones_like(struct_noised["t"]),
         }[weighting][:, None].float() / num_timesteps
         struct_weight = struct_weight.expand(struct_target.size())
+
+        struct_weight_point = {
+            "linear": (
+                num_timesteps - (struct_noised["t"] - 1)
+            ),  # num_timesteps * (1 - (t-1)/num_timesteps)
+            "constant": num_timesteps * torch.ones_like(struct_noised["t"]),
+        }[weighting].float() / num_timesteps
 
         # 将需要忽略的位置的权重设置为0
         if 'struct_ignore' in batch:
@@ -1220,7 +1229,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
             scale_alpha = 0.5
 
-            max_alpha = 0.15
+            max_alpha = 0.25
             times_gama = 3
 
             # 结构权重计算（基于struct_t）
@@ -1284,6 +1293,12 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 "aatype": aatype_weight,
                 "struct": struct_weight,
             },  # training loss weight
+            {
+                "aatype": aatype_hidden_state,
+                "struct": struct_hidden_state,
+                "motif": batch.get("motif_position_and_label", None),
+                "struct_weight_point": struct_weight_point,
+            },  # training hidden state
         )
 
     def forward_encoder(self, batch, **kwargs):

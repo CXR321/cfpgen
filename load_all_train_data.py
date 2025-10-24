@@ -517,6 +517,7 @@ def load_motif_segment_mask_data():
             item = meta_data
             motif_position_s = []
             motif_position_e = []
+            motif_desc = []
             motif_mask = torch.zeros(len(item['aa_seq']), dtype=torch.bool)
             if item.get('motif'):
                 for motif in item['motif']:
@@ -530,6 +531,7 @@ def load_motif_segment_mask_data():
                         motif_position_s.append(s)
                         motif_position_e.append(e)
                         motif_mask[s:e] = True
+                        motif_desc.append(motif['go_term'])
                         continue
                     else:
                         s, e = find_pfam_in_aaseq(item['aa_seq'], item['sequence'], motif['start'], motif['end'])
@@ -537,6 +539,7 @@ def load_motif_segment_mask_data():
                             motif_position_s.append(s)
                             motif_position_e.append(e)
                             motif_mask[s:e] = True
+                            motif_desc.append(motif['go_term'])
                             continue
                         else:
                             continue
@@ -544,6 +547,7 @@ def load_motif_segment_mask_data():
                     item['motif_mask'] = motif_mask
                     item['motif_position_s'] = motif_position_s
                     item['motif_position_e'] = motif_position_e
+                    item['motif_desc'] = motif_desc
                 else:
                     pass
             new_data.append(item)
@@ -566,13 +570,68 @@ def load_motif_segment_mask_data():
     save_all_pfam_emb_data("test", data)
 
 
+def modify_motif_desc2number():
+
+    with open("./go_id_mapping.pkl", 'rb') as f:
+        desc2map_dict = pickle.load(f)
+
+    with open("./desc2map_dict_statics.pkl", 'rb') as f:
+        desc2map_dict_statics = pickle.load(f)
+
+    def modify(data):
+        new_data = []
+        for meta_data in data:
+            try:
+                item = meta_data
+                motif_desc_list = item.get('motif_desc', [])
+                
+                motif_go_number = []
+                for desc in motif_desc_list:
+                    if desc in desc2map_dict_statics:
+                        motif_go_number.append(desc2map_dict_statics[desc])
+                        continue
+                    
+                    if desc == "acetyl-CoA:L-glutamate N-acetyltransferase activity":
+                        desc = "L-glutamate N-acetyltransferase activity"
+                    elif desc == "glutamate N-acetyltransferase activity":
+                        desc = "L-glutamate N-acetyltransferase activity, acting on acetyl-L-ornithine as donor"
+                    elif desc == "methione N-acyltransferase activity":
+                        desc = "L-methionine N-acyltransferase activity"
+                    elif desc == "oxidoreductase activity, acting on NAD(P)H, NAD(P) as acceptor":
+                        desc = "oxidoreductase activity, acting on NAD(P)H as acceptor"
+
+                    motif_go_number.append(desc2map_dict['motif_desc_to_id'][desc])
+                
+                item['motif_go_number'] = motif_go_number
+            except Exception as e:
+                print(e)
+                print(f"Error in {item['uniprot_id']}")
+                print(item)
+                exit()
+            new_data.append(item)
+        return new_data
+
+    data = load_all_pfam_emb_data("train") # 加载pfam_emb数据
+    data = modify(data)
+    save_all_pfam_emb_data("train", data)
+
+    print(data[1])
+
+    data = load_all_pfam_emb_data("valid") # 加载pfam_emb数据
+    data = modify(data)
+    save_all_pfam_emb_data("valid", data)
+
+    data = load_all_pfam_emb_data("test") # 加载pfam_emb数据
+    data = modify(data)
+    save_all_pfam_emb_data("test", data)
 
 
 
 if __name__ == "__main__":
     # load_struct_token()
-    load_pfam_emb()
+    # load_pfam_emb()
     # load_motif_segment_mask_data()
+    modify_motif_desc2number()
 
 # d = load_all_motif_data("train")
 # d = load_all_pfam_data("train")

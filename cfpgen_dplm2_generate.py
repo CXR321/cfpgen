@@ -96,8 +96,8 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
     motif_struct_emb = None
     if config.get('use_motif_struct_emb', False):
         motif_struct_emb = sample['motif_struct_emb']
-        if sample.get('pfam_emb', None) is not None:
-            motif_struct_emb = sample['pfam_emb']
+        # if sample.get('pfam_emb', None) is not None:
+        #     motif_struct_emb = sample['pfam_emb']
         # print(motif_struct_emb.shape)
         # exit()
         if motif_struct_emb is None:

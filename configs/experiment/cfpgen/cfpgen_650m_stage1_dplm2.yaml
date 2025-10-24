@@ -72,8 +72,8 @@ model:
 
   use_diff_modulation: true
   use_func_cross_attn: true
-  use_diff_ce: true
-  use_motif_struct_emb: true
+  use_diff_ce: false
+  use_motif_struct_emb: false
   use_static_scale: true
 
 
@@ -85,9 +85,14 @@ task:
     cal_constant_loss: false
     weight: linear
   criterion:
-    _target_: byprot.modules.cross_entropy.StructAARDMCrossEntropyLoss
+    # _target_: byprot.modules.cross_entropy.StructAARDMCrossEntropyLoss
+    _target_: byprot.modules.cross_entropy.ContrastMotifStructAARDMCrossEntropyLoss
     label_smoothing: 0.0
     ignore_index: 1
+
+    scale: 0.1
+    start_step: 10000
+
   optimizer:
     type: adamw
     _partial_: true

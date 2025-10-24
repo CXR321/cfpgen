@@ -107,7 +107,13 @@ path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfam
         
 # print(n)
 
-a = []
+# a = []
 
-a.extend([1,2,3])
+# # a.extend([1,2,3])
+# a = ' '.join(["123", "321"])
+# print(a)
+features = torch.tensor([[1,2,3], [4,5,6], [7,8,9]], dtype=torch.float)
+all_features = features
+a = torch.cdist(features, all_features, p=2)
+
 print(a)

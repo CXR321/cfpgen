@@ -301,7 +301,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             - tokens: LongTensor [bsz, len], sequence of amino acids     
         """
         weighting = self.hparams.learning.weight
-        logits, target, loss_mask, weights = self.model.compute_loss(
+        logits, target, loss_mask, weights, hidden_states = self.model.compute_loss(
             batch, weighting=weighting)
 
         # print(f"logits shape: {logits.shape}")
@@ -314,7 +314,14 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             weights,
             watch_t1_t2_loss=self.hparams.learning.watch_t1_t2_loss,
             cal_constant_loss=self.hparams.learning.cal_constant_loss,
+            hidden_states=hidden_states,
         )
+
+        print(f"loss: {loss}")
+
+        # for name, param in self.model.named_parameters():
+        #     if param.grad is not None and torch.isnan(param.grad).any():
+        #         print("NaN in grad:", name)
         
         if torch.isnan(loss):
             print("Loss NAN on step ", self.global_step)
