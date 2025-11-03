@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from byprot.models import register_model
 from omegaconf import OmegaConf
+from byprot.models.lm.esm_cfpgen import AttentionStore, register_attention_control
 from byprot.models.lm.model_utils import LoRAConfig, NetConfig, CondConfig, get_net, get_net_class, \
     sample_from_categorical, stochastic_sample_from_categorical, top_k_top_p_filtering, topk_masking, topk_masking_prior
 from transformers import AutoTokenizer, AutoConfig
@@ -90,6 +91,8 @@ class CFPGENConfig_DPLM2:
     use_diff_ce: bool = field(default=False)
     use_motif_struct_emb: bool = field(default=False)
     use_static_scale: bool = field(default=False)
+
+    use_attention_store: bool = field(default=False)
 
 
 @register_model('cfp_gen')
@@ -738,12 +741,19 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         self.use_motif_struct_emb = getattr(self.cfg, 'use_motif_struct_emb', False)
         self.use_static_scale = getattr(self.cfg, 'use_static_scale', False)
 
+        self.use_attention_store = getattr(self.cfg, 'use_attention_store', False)
+
         
         if self.cfg.gradient_ckpt:
             self.net.supports_gradient_checkpointing = True
             self.net.gradient_checkpointing_enable()
     
         self._struct_tokenizer = None
+
+        if self.use_attention_store:
+            self.attention_store = AttentionStore()
+            register_attention_control(self.net.esm.encoder, self.attention_store)
+
         # print("init cdplm2 done")
 
     def _prepare_special_token(self):
@@ -907,6 +917,10 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         type_ids = self.get_modality_type(input_ids['x_t'])
 
+        # print(input_mask.shape)
+        # exit()
+
+
         L = input_ids['x_t'].shape[1]
         num_heads = self.net.config.num_attention_heads
         # [B, num_heads, L+2, L+2]
@@ -942,7 +956,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             inputs_embeds=input_embeds,
             attention_mask=attention_bias,
             type_ids=type_ids,
+            go_type_mask=input_ids['go_type_mask'],
         )
+
 
         return outputs       
 
@@ -1174,7 +1190,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             motif_struct_emb = batch['motif_struct_emb']
             # print(motif_struct_emb)
 
-        inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'], motif_struct_emb=motif_struct_emb)
+        inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'], motif_struct_emb=motif_struct_emb, go_type_mask=batch.get('go_type_mask', None))
 
         # if batch.get("struct_ignore") is not None:
         #    temp = batch['struct_ignore']
@@ -1186,6 +1202,8 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 input_ids=inputs,
                 single_modality=single_modality_index,
             )
+
+
 
         struct_logits, aatype_logits = model_outputs["logits"].chunk(2, dim=1)
         struct_hidden_state, aatype_hidden_state = model_outputs["last_hidden_state"].chunk(2, dim=1)
@@ -1206,6 +1224,13 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             "constant": num_timesteps * torch.ones_like(struct_noised["t"]),
         }[weighting].float() / num_timesteps
 
+        aa_weight_point = {
+            "linear": (
+                num_timesteps - (aatype_noised["t"] - 1)
+            ),  # num_timesteps * (1 - (t-1)/num_timesteps)
+            "constant": num_timesteps * torch.ones_like(aatype_noised["t"]),
+        }[weighting].float() / num_timesteps
+
         # 将需要忽略的位置的权重设置为0
         if 'struct_ignore' in batch:
             # pass
@@ -1219,7 +1244,37 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             "constant": num_timesteps * torch.ones_like(aatype_noised["t"]),
         }[weighting][:, None].float() / num_timesteps
         aatype_weight = aatype_weight.expand(aatype_target.size())
-        
+
+
+        attn_map_loss_dict = None
+        avg_attn_map = None
+        if self.use_attention_store:
+            # print(f"attention_store: {self.attention_store.attention_maps}")
+            attenion_maps = self.attention_store.get_attention_maps()
+
+            avg_attn_map = []
+            for name, attn_map in attenion_maps.items():
+                avg_attn_map.append(attn_map)
+            # print(f"avg_attn_map: {avg_attn_map}")
+            avg_attn_map = torch.stack(avg_attn_map).mean(0)
+            # print(f"avg_attn_map: {avg_attn_map.shape}")
+            # print(f"avg_attn_map: {avg_attn_map}")
+
+            avg_attn_map = avg_attn_map.reshape(avg_attn_map.shape[0], avg_attn_map.shape[2], avg_attn_map.shape[1])
+            # print(f"avg_attn_map: {avg_attn_map.shape}")
+
+            self.attention_store.reset()
+
+            attn_map_loss_dict = {
+                "attn_map": avg_attn_map,
+                "struct_weight_point": struct_weight_point,
+                "aatype_weight_point": aa_weight_point,
+                "go_type_segments": batch.get("go_type_segments", None),
+                "go_type_segments_mask": batch.get("go_type_segments_mask", None),
+            }
+
+
+
         # just scale original factor
         if self.use_diff_ce:
             # print("in diff ce ")
@@ -1276,6 +1331,13 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         #     # print(f"final struct_weight: {struct_weight}")
         #     # exit()
+
+        # if self.use_attention_store:
+        #     attention_maps = self.attention_store.get_attention_maps()
+        #     print(f"attention_maps: {attention_maps}")
+        #     print(f"attention_maps.keys(): {attention_maps.keys()}")
+        #     print(f"attention_maps.values(): {attention_maps.values()}")
+        #     exit()
         return (
             {
                 "aatype": aatype_logits,
@@ -1299,6 +1361,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 "motif": batch.get("motif_position_and_label", None),
                 "struct_weight_point": struct_weight_point,
             },  # training hidden state
+            attn_map_loss_dict,
         )
 
     def forward_encoder(self, batch, **kwargs):

@@ -126,6 +126,7 @@ def get_net(cfg):
             config.use_func_cross_attn = getattr(cfg, "use_func_cross_attn", False)
             config.use_motif_struct_emb = getattr(cfg, "use_motif_struct_emb", False)
             config.use_static_scale = getattr(cfg, "use_static_scale", False)
+            config.use_attention_store = getattr(cfg, "use_attention_store", False)
 
             # print(f"config: {config}")
             if 'cond' in cfg:

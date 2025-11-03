@@ -97,6 +97,8 @@ class CFPGENTrainingTask(TaskLitModule):
         self.eval_loss = MeanMetric()
         self.eval_nll_loss = MeanMetric()
 
+        self.eval_original_loss = MeanMetric()
+
         self.val_ppl_best = MinMetric()
         
     def step(self, batch):
@@ -154,6 +156,7 @@ class CFPGENTrainingTask(TaskLitModule):
         sample_size = logging_output['sample_size']
         self.eval_loss.update(loss, weight=sample_size)
         self.eval_nll_loss.update(logging_output['nll_loss'], weight=sample_size)
+        self.eval_original_loss.update(logging_output['original_loss'], weight=sample_size)
 
         return {"loss": loss}
 
@@ -167,9 +170,14 @@ class CFPGENTrainingTask(TaskLitModule):
         self.eval_nll_loss.reset()
         eval_ppl = torch.exp(eval_nll_loss)
 
+        eval_original_loss = self.eval_original_loss.compute()
+        self.eval_original_loss.reset()
+
         self.log(f"{log_key}/loss", eval_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/nll_loss", eval_nll_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/ppl", eval_ppl, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{log_key}/original_loss", eval_original_loss, on_step=False, on_epoch=True, prog_bar=True)
+
 
         if self.stage == 'fit':
             self.val_ppl_best.update(eval_ppl)
@@ -301,7 +309,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             - tokens: LongTensor [bsz, len], sequence of amino acids     
         """
         weighting = self.hparams.learning.weight
-        logits, target, loss_mask, weights, hidden_states = self.model.compute_loss(
+        logits, target, loss_mask, weights, hidden_states, attn_map_loss = self.model.compute_loss(
             batch, weighting=weighting)
 
         # print(f"logits shape: {logits.shape}")
@@ -315,6 +323,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             watch_t1_t2_loss=self.hparams.learning.watch_t1_t2_loss,
             cal_constant_loss=self.hparams.learning.cal_constant_loss,
             hidden_states=hidden_states,
+            attn_map_loss=attn_map_loss,
         )
 
         print(f"loss: {loss}")

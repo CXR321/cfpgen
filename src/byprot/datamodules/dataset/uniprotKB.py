@@ -3,6 +3,7 @@ import json
 import pickle
 import os
 from typing import Union, TypeVar, Sequence
+from numpy.ma.core import get_mask
 import torch.distributed as dist
 import numpy as np
 from transformers import EsmTokenizer
@@ -366,14 +367,18 @@ class UniProtKB_DPLM2_Dataset(Dataset):
         motif_position_and_label = {}
 
         for s, e, label in zip(idx.get('motif_position_s', []), idx.get('motif_position_e', []), idx.get('motif_go_number', [])):
-            motif_position_and_label[(s, e)] = label
+            if start<=s and e<=stop:
+                motif_position_and_label[(s-start+1, e-start+1)] = label
+
+        reverse_map = {v: k for k, v in motif_position_and_label.items()}
+        go_type_segments = [reverse_map.get(value, None) for value in go_type]
 
 
 
         # Now consensus not add cls and eos but struct and aa type tokens add
         # assert (len(aatype_tokens)-2*len(self.tokenizer.aa_cls_token)) == ((len(struct_tokens)-2*len(self.tokenizer.struct_cls_token))/4) == (len(consensus))
 
-        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motif_struct_emb, struct_ignore, motif_position_and_label
+        return consensus, go_type, ipr_type, ec_type, motif_start_end, struct_tokens, aatype_tokens, motif_mask, motif_struct_emb, struct_ignore, motif_position_and_label, go_type_segments
 
 
 class UniProtKBDatasetForTesting(Dataset):
@@ -552,6 +557,10 @@ class DPLM2Collater(object):
         padded_go_type = torch.tensor(padded_go_type)
         padded_ipr_type = torch.tensor(padded_ipr_type)
 
+        go_type_mask = torch.zeros(padded_go_type.shape, dtype=torch.bool)
+        for i, go_list in enumerate(go_type):
+            go_type_mask[i, :len(go_list)] = True
+
         cfpgen_batch = {
             'input_ids':  batch['input_ids'],
             'input_mask': batch['attention_mask'].bool(),
@@ -587,6 +596,10 @@ class DPLM2Collater(object):
 
         aatype_list = [ele[6] for ele in input_data]
         # aatype_list = [sample["aatype_tokens"] for sample in raw_batch]
+        raw_lens = [len(seq) - 14 for seq in aatype_list]
+        # print(aatype_list)
+
+
         batch_aatype = self.tokenizer.batch_encode_plus(
             aatype_list,
             add_special_tokens=False,
@@ -604,6 +617,7 @@ class DPLM2Collater(object):
         struct_ignore_list = [ele[9] for ele in input_data]
 
         motif_position_and_label_list = [ele[10] for ele in input_data]
+        go_type_segments = [ele[11] for ele in input_data]
 
         motif_mask = pad_sequence(motif_mask_list, batch_first=True, padding_value=False)
 
@@ -624,6 +638,57 @@ class DPLM2Collater(object):
         batch['struct_ignore'] = torch.tensor(struct_ignore_list)
 
         batch['motif_position_and_label'] = motif_position_and_label_list
+
+        # batch['go_type_segments'] = go_type_segments
+
+        batch['go_type_segments'] = []
+        seq_len = batch_struct['targets'].shape[1]
+
+        batch['go_type_segments'] = []
+        batch['go_type_segments_mask'] = []
+
+        max_gotype_len = max(len(go_list) for go_list in go_type)
+
+        # print(f"max_gotype_len: {max_gotype_len}")
+        # print(f"seq_len: {seq_len}")
+
+        for single_p_go_type_segments, raw_len in zip(go_type_segments, raw_lens):
+            single_gt = []
+            single_gt_mask = []
+            for segement in single_p_go_type_segments:
+                if segement is not None:
+                    gt = torch.zeros(2*seq_len, dtype=torch.float)
+                    gt_mask = torch.zeros(2*seq_len, dtype=torch.bool)
+                    start, end = segement
+                    gt[start:end] = 1.0
+                    gt[start+seq_len:end+seq_len] = 1.0
+                    gt_mask[1:raw_len-1] = True
+                    gt_mask[1+seq_len:raw_len-1+seq_len] = True
+
+                    # print(f"rawlen: {raw_len}, start: {start}, end: {end}")
+                    single_gt.append(gt)
+                    single_gt_mask.append(gt_mask)
+                else:
+                    single_gt.append(torch.zeros(2*seq_len, dtype=torch.float))
+                    single_gt_mask.append(torch.zeros(2*seq_len, dtype=torch.bool))
+            for _ in range(max_gotype_len-len(single_p_go_type_segments)):
+                single_gt.append(torch.zeros(2*seq_len, dtype=torch.float))
+                single_gt_mask.append(torch.zeros(2*seq_len, dtype=torch.bool))
+            batch['go_type_segments'].append(torch.stack(single_gt))
+            batch['go_type_segments_mask'].append(torch.stack(single_gt_mask))
+        batch['go_type_segments'] = torch.stack(batch['go_type_segments'])
+        batch['go_type_segments_mask'] = torch.stack(batch['go_type_segments_mask'])
+
+        batch['go_type_mask'] = go_type_mask
+                    
+
+        # print(f"go_type_segments: {batch['go_type_segments'].shape}")
+        # print(f"go_type_segments_mask: {batch['go_type_segments_mask'].shape}")
+        # print(f"go_type_segments: {batch['go_type_segments']}")
+        # print(f"go_type_segments_mask: {batch['go_type_segments_mask']}")
+
+        # exit()
+
 
         # for id, value in enumerate(batch['struct_ignore']):
         #     if value:

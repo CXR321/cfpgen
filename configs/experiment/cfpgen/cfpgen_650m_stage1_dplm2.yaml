@@ -75,6 +75,7 @@ model:
   use_diff_ce: false
   use_motif_struct_emb: false
   use_static_scale: true
+  use_attention_store: true
 
 
 task:
@@ -92,6 +93,10 @@ task:
 
     scale: 0.1
     start_step: 10000
+    temperature: 0.5
+
+    attn_scale: 0.1
+    attn_start_step: 10000
 
   optimizer:
     type: adamw

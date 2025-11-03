@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from math import inf
 from typing import Optional
 from typing import List
 import torch
@@ -17,6 +18,7 @@ from transformers import AutoConfig, AutoModelForMaskedLM, AutoTokenizer
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from copy import deepcopy
 import random
+from typing import Dict, List, Optional
 
 class ModifiedRotaryEmbedding(RotaryEmbedding):
     """Rotary position embeddings based on those in.
@@ -527,6 +529,187 @@ class AGFMLayer(nn.Module):
         outputs = (layer_output,) + outputs
         return outputs
 
+
+# AttentionStore 类 (基础存储器)
+class AttentionStore:
+    """用于存储模型在各层计算出的注意力图的容器。"""
+    def __init__(self):
+        # 键: 层名 (e.g., 'layer_0_func_attn'), 值: 收集到的 attn map 列表
+        self.attention_maps: Dict[str, List[torch.Tensor]] = {}
+
+    def reset(self):
+        """清除存储的所有注意力图，用于新的前向/训练步骤。"""
+        self.attention_maps = {}
+
+    def get_attention_maps(self) -> Dict[str, List[torch.Tensor]]:
+        """返回存储的注意力图字典。"""
+        return self.attention_maps
+
+# Hook 注册工具
+def register_attention_control(model: nn.Module, controller: AttentionStore):
+    """
+    遍历 CFPGenEncoderDPLM2 的所有 AGFMLayerDPLM2，并为功能交叉注意力模块注册 hook。
+    """
+    def get_attention_hook(layer_name: str):
+        """生成一个用于捕获注意力权重的 hook 函数。"""
+        def hook_fn(module, input, output):
+            # output 是 nn.MultiheadAttention 的返回值元组 (attn_output, attn_output_weights)
+            # 我们需要的是第二个元素：注意力权重 (attn_output_weights)
+            # print(f"hook ok in {module.__class__.__name__}, {layer_name}")
+            # print(f"hook ouput: {output}")
+            if len(output) > 1 and output[1] is not None:
+                attn_weights: torch.Tensor = output[1]
+                num_heads = module.num_heads
+
+                # print(f"attn_weights.shape: {attn_weights.shape}")
+                # print(f"num_heads: {num_heads}")
+                # print(f"output[0].shape: {output[0].shape}")
+
+                # 注意力权重的形状是 (batch_size, seq_len, funclen)
+
+                attn_map = attn_weights
+                               
+                controller.attention_maps[layer_name] = attn_map
+
+        return hook_fn
+
+    # 遍历 CFPGenEncoderDPLM2 的所有 AGFMLayerDPLM2 层 (即 model.layer)
+    for i, layer in enumerate(model.layer):
+        # 仅对启用了功能 Cross-Attention 的层进行 Hook
+        if hasattr(layer, 'use_func_cross_attn') and layer.use_func_cross_attn:
+            # 找到 func_cross_attn 模块
+            module = layer.cross_attn 
+            layer_name = f"layer_{i}_func_attn"
+            
+            # 注册 hook
+            module.register_forward_hook(get_attention_hook(layer_name))
+
+def _init_module_weights(module, initializer_range=0.02):
+    """
+    一个辅助函数，用于对单个模块（如 nn.Linear）进行初始化。
+    """
+    if isinstance(module, nn.Linear):
+        # 线性层初始化：使用截断正态分布
+        module.weight.data.normal_(mean=0.0, std=initializer_range)
+        if module.bias is not None:
+            module.bias.data.zero_()
+            
+    elif isinstance(module, nn.Embedding):
+        # 嵌入层初始化：使用正态分布
+        module.weight.data.normal_(mean=0.0, std=initializer_range)
+        
+    elif isinstance(module, nn.LayerNorm):
+        # LayerNorm 初始化
+        if hasattr(module.weight, 'data'):
+            module.weight.data.fill_(1.0)
+        if hasattr(module.bias, 'data'):
+            module.bias.data.zero_()
+
+class NonSoftmaxMultiheadAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, dropout=0.0, bias=True):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        assert self.head_dim * num_heads == self.embed_dim, "embed_dim 必须能被 num_heads 整除"
+        
+        # 线性投影层 (W_Q, W_K, W_V)
+        # 我们将所有 QKV 投影合并到一个层中，简化操作（与 nn.MultiheadAttention 类似）
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.v_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        
+        # 最后的输出投影层 (W_O)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        
+        self.dropout = nn.Dropout(dropout)
+        self.scaling = self.head_dim ** -0.5 # 缩放因子 1/sqrt(d_k)
+        
+        # 初始化权重 (使用与Transformer一致的初始化)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        # 经典的 Transformer 初始化
+        nn.init.xavier_uniform_(self.q_proj.weight)
+        nn.init.xavier_uniform_(self.k_proj.weight)
+        nn.init.xavier_uniform_(self.v_proj.weight)
+        nn.init.xavier_uniform_(self.out_proj.weight)
+        if self.q_proj.bias is not None:
+            nn.init.constant_(self.q_proj.bias, 0.)
+            nn.init.constant_(self.k_proj.bias, 0.)
+            nn.init.constant_(self.v_proj.bias, 0.)
+            nn.init.constant_(self.out_proj.bias, 0.)
+
+    def forward(
+            self,
+            query: torch.Tensor,
+            key: torch.Tensor,
+            value: torch.Tensor,
+            key_padding_mask: Optional[torch.Tensor] = None,
+            attn_mask: Optional[torch.Tensor] = None, # <-- 新增 attn_mask 参数
+            need_weights: bool = True,
+        ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+            
+            B, Lq, D = query.shape
+            Lk = key.shape[1]
+            
+            # 1-3. Q, K, V 投影与多头分割 (不变)
+            # ... (略去 QKV 投影和分割代码)
+            q = self.q_proj(query) # [B, Lq, D]
+            k = self.k_proj(key)   # [B, Lk, D]
+            v = self.v_proj(value) # [B, Lk, D]
+            
+            q = q.view(B, Lq, self.num_heads, self.head_dim).transpose(1, 2) # [B, H, Lq, head_dim]
+            k = k.view(B, Lk, self.num_heads, self.head_dim).transpose(1, 2) # [B, H, Lk, head_dim]
+            v = v.view(B, Lk, self.num_heads, self.head_dim).transpose(1, 2) # [B, H, Lk, head_dim]
+
+            # 4. 计算注意力得分
+            attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling 
+            # attn_scores 形状: [B, H, Lq, Lk]
+
+            # print(f"key_padding_mask: {key_padding_mask}")
+            
+            # 5. 应用 Key Padding Mask (如果存在)
+            if key_padding_mask is not None:
+                # key_padding_mask shape: [B, Lk]
+                # 扩展 mask 以匹配 attn_scores [B, H, Lq, Lk]
+                attn_scores.masked_fill_(
+                    ~key_padding_mask.unsqueeze(1).unsqueeze(2), 
+                    -inf # 用一个非常小的负数填充，保证该位置的 score 极低
+                )
+            
+            # 6. ⚠️ 关键修改：应用 Attention Mask (如果存在)
+            if attn_mask is not None:
+
+                # print(f"attn_mask.shape: {attn_mask[:, 0, 0, :].shape}")
+                # print(f"attn_mask: {attn_mask}")
+                attn_scores += attn_mask[:, 0, 0, :].unsqueeze(1).unsqueeze(-1) # [B, Lq] -> 广播到 [B, H, Lq, Lk]
+                # 如果 mask 已经是 [B, Lq, Lk]，则需要 [B, 1, Lq, Lk] 广播
+                # 为了最健壮，假设 mask 形状兼容 [B, H, Lq, Lk]
+                
+                # 如果您使用的 mask 是 [Lq, Lk] 并且只包含 0 或 -inf，最稳健的做法是：
+                # attn_scores = attn_scores + attn_mask 
+                pass # 假设 mask 已经是可加的形状
+
+            # 7. 应用 Sigmoid 激活（非 Softmax）
+            # 低得分（如 -1e9）经过 Sigmoid 后会非常接近 0，从而实现忽略 Mask 位置的目的。
+            attn_weights = torch.sigmoid(attn_scores) 
+
+            # print(f"attn_weights: {attn_weights}")
+            
+            # 8-10. 加权求和，合并多头，最终输出投影 (不变)
+            attn_output = torch.matmul(attn_weights, v) # [B, H, Lq, head_dim]
+            attn_output = attn_output.transpose(1, 2).contiguous().view(B, Lq, D) # [B, Lq, D]
+            attn_output = self.out_proj(attn_output)
+            attn_output = self.dropout(attn_output)
+
+            final_scores = None
+            if True:
+                # 返回所有头的平均 Sigmoid 权重，[B, Lq, Lk]
+                final_scores = attn_weights.mean(dim=1) 
+                
+            return attn_output, final_scores
+
 class AGFMLayerDPLM2(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -542,16 +725,20 @@ class AGFMLayerDPLM2(nn.Module):
             nn.SiLU(),
             nn.Linear(config.hidden_size, 6 * config.hidden_size, bias=True),  # use gate_msa
         )
+            
         else:
             self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
             nn.Linear(config.hidden_size, 12 * config.hidden_size, bias=True),  # use gate_msa
         )
 
+        self.adaLN_modulation.apply(_init_module_weights)
+
         self.use_diff_modulation = getattr(config, "use_diff_modulation", False)
         self.use_func_cross_attn = getattr(config, "use_func_cross_attn", False)
         self.use_motif_struct_emb = getattr(config, "use_motif_struct_emb", False)
         self.use_static_scale = getattr(config, "use_static_scale", False)
+        self.use_attention_store = getattr(config, "use_attention_store", False)
 
         # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
         # print(f"use static scale: {self.use_static_scale}")
@@ -562,10 +749,14 @@ class AGFMLayerDPLM2(nn.Module):
             # === 新增：功能 cross-attn 模块（F -> tokens）===
             self.func_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=True)
             self.cross_attn_ln = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-            self.cross_attn = nn.MultiheadAttention(
+            # self.cross_attn = nn.MultiheadAttention(
+            #     embed_dim=config.hidden_size,
+            #     num_heads=config.num_attention_heads,
+            #     batch_first=True,
+            # )
+            self.cross_attn = NonSoftmaxMultiheadAttention(
                 embed_dim=config.hidden_size,
                 num_heads=config.num_attention_heads,
-                batch_first=True,
             )
             # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
 
@@ -573,6 +764,10 @@ class AGFMLayerDPLM2(nn.Module):
                 self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
             else:
                 self.cross_res_scale = torch.tensor(1.0)
+
+            self.cross_attn.apply(_init_module_weights)
+            self.func_proj.apply(_init_module_weights)
+            self.cross_attn_ln.apply(_init_module_weights)
 
         if self.use_motif_struct_emb:
 
@@ -603,11 +798,16 @@ class AGFMLayerDPLM2(nn.Module):
             cond_input=None,
             type_ids=None,
             motif_struct_emb=None,
+            go_type_mask=None,
     ):
 
         if cond_input is not None:
             if self.use_diff_modulation:
-                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input).chunk(12, dim=1)
+
+                if self.use_attention_store:
+                    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input.sum(dim=1)).chunk(12, dim=1)
+                else:
+                    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input).chunk(12, dim=1)
 
                 shift_msa = [shift_msa, shift_msa_seq]
                 scale_msa = [scale_msa, scale_msa_seq]
@@ -655,8 +855,7 @@ class AGFMLayerDPLM2(nn.Module):
                 q = self.cross_attn_ln(attention_output)           # [B, L, D]
                 cross_out, cross_w = self.cross_attn(
                     query=q, key=func_tok, value=func_tok,
-                    need_weights=output_attentions,
-                    attn_mask=None, key_padding_mask=None
+                    attn_mask=attention_mask, key_padding_mask=go_type_mask
                 )  # cross_out: [B, L, D]
 
                 # 残差 + 门控（AA/Struct 差异化）
@@ -839,222 +1038,222 @@ class FuncTagEmbedder(nn.Module):
         return embeddings
 
 
-class CFPGenEncoder(EsmEncoder):
-    def __init__(self, config):
-        nn.Module.__init__(self)
-        self.config = config
-        self.emb_layer_norm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.gradient_checkpointing = False
+# class CFPGenEncoder(EsmEncoder):
+#     def __init__(self, config):
+#         nn.Module.__init__(self)
+#         self.config = config
+#         self.emb_layer_norm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+#         self.gradient_checkpointing = False
 
-        self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
+#         self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
 
-        if self.use_go:
-            self.go_class_num = config.go_num
-            self.go_cls_dropout_all = config.go_drop
-            self.go_cls_dropout_each = 0.1
-            self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
+#         if self.use_go:
+#             self.go_class_num = config.go_num
+#             self.go_cls_dropout_all = config.go_drop
+#             self.go_cls_dropout_each = 0.1
+#             self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
 
-        if self.use_ipr:
-            self.ipr_class_num = config.ipr_num
-            self.ipr_cls_dropout_all = config.ipr_drop
-            self.ipr_cls_dropout_each = 0.1
-            self.ipr_embedder = FuncTagEmbedder(config.ipr_num, config.hidden_size)
+#         if self.use_ipr:
+#             self.ipr_class_num = config.ipr_num
+#             self.ipr_cls_dropout_all = config.ipr_drop
+#             self.ipr_cls_dropout_each = 0.1
+#             self.ipr_embedder = FuncTagEmbedder(config.ipr_num, config.hidden_size)
 
-        if self.use_ec:
-            self.ec_class_num = config.ec_num
-            self.ec_cls_dropout_all = config.ec_drop
-            self.ec_cls_dropout_each = 0
-            self.ec_embedder = FuncTagEmbedder(config.ec_num, config.hidden_size)
-
-
-        self.layer = nn.ModuleList([AGFMLayer(deepcopy(config)) for _ in range(config.num_hidden_layers)])
-
-        if config.use_seq_motif:
-            self.copy_blocks_num = config.num_hidden_layers//2
-            self.anno_dropout = 0.5
-            self.seq_controlnet = nn.ModuleList(
-                [RCFEBlock(AGFMLayer(deepcopy(config)), i, config.hidden_size) for i in range(self.copy_blocks_num)]
-            )
-        else:
-            self.seq_controlnet = None
+#         if self.use_ec:
+#             self.ec_class_num = config.ec_num
+#             self.ec_cls_dropout_all = config.ec_drop
+#             self.ec_cls_dropout_each = 0
+#             self.ec_embedder = FuncTagEmbedder(config.ec_num, config.hidden_size)
 
 
-    def drop_anno_ids(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
-        """
-        Drop annotation class IDs either at sample level or element level, then compute embeddings.
-        """
-        if training:
-            # Drop all class IDs in a row with drop_all_prob
-            drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
-            full_replacement = torch.full_like(class_tensor, class_num)
-            class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+#         self.layer = nn.ModuleList([AGFMLayer(deepcopy(config)) for _ in range(config.num_hidden_layers)])
 
-            # Drop individual elements in class_tensor with drop_each_prob
-            drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
-            class_tensor = torch.where(drop_each, full_replacement, class_tensor)
-
-        class_embeds = []
-        for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
-            class_ids = class_split.squeeze(-1)
-            class_embed = embedder(class_ids)
-            # Zero-out embeddings where class_id == class_num (i.e., dropped)
-            mask = (class_ids == class_num).unsqueeze(-1)
-            class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
-            class_embeds.append(class_embed)
-
-        # Combine class embeddings by summation
-        return torch.sum(torch.stack(class_embeds, dim=0), dim=0)
+#         if config.use_seq_motif:
+#             self.copy_blocks_num = config.num_hidden_layers//2
+#             self.anno_dropout = 0.5
+#             self.seq_controlnet = nn.ModuleList(
+#                 [RCFEBlock(AGFMLayer(deepcopy(config)), i, config.hidden_size) for i in range(self.copy_blocks_num)]
+#             )
+#         else:
+#             self.seq_controlnet = None
 
 
-    def forward(
-            self,
-            hidden_states,
-            attention_mask=None,
-            head_mask=None,
-            encoder_hidden_states=None,
-            encoder_attention_mask=None,
-            past_key_values=None,
-            use_cache=None,
-            output_attentions=False,
-            output_hidden_states=False,
-            return_dict=True,
-            **kwargs
-    ):
+#     def drop_anno_ids(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
+#         """
+#         Drop annotation class IDs either at sample level or element level, then compute embeddings.
+#         """
+#         if training:
+#             # Drop all class IDs in a row with drop_all_prob
+#             drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
+#             full_replacement = torch.full_like(class_tensor, class_num)
+#             class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+
+#             # Drop individual elements in class_tensor with drop_each_prob
+#             drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
+#             class_tensor = torch.where(drop_each, full_replacement, class_tensor)
+
+#         class_embeds = []
+#         for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
+#             class_ids = class_split.squeeze(-1)
+#             class_embed = embedder(class_ids)
+#             # Zero-out embeddings where class_id == class_num (i.e., dropped)
+#             mask = (class_ids == class_num).unsqueeze(-1)
+#             class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
+#             class_embeds.append(class_embed)
+
+#         # Combine class embeddings by summation
+#         return torch.sum(torch.stack(class_embeds, dim=0), dim=0)
 
 
-        '''
-        Annotation-Guided Feature Modulation (AGFM)
-        '''
-
-        anno_tag = kwargs.get('anno_tag')
-        anno_embed = None
-
-        if anno_tag is not None:
-
-            go_class = anno_tag.get('go')
-            ipr_class = anno_tag.get('ipr')
-            ec_class = anno_tag.get('ec')
-
-            seq_num = hidden_states.size(0)
-
-            def prepare_class(cls, class_num):
-                """Replace -1 with class_num and broadcast if needed."""
-                if not self.training and cls.dim() == 1:
-                    cls = cls.unsqueeze(0).repeat(seq_num, 1)
-                return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
-
-            if self.use_go and go_class is not None:
-                go_class = prepare_class(go_class, self.go_embedder.num_classes)
-                anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
-                                                self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
-
-            if self.use_ipr and ipr_class is not None:
-                ipr_class = prepare_class(ipr_class, self.ipr_embedder.num_classes)
-                ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
-                                               self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
-                anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
-
-            if self.use_ec and ec_class is not None:
-                ec_class = prepare_class(ec_class, self.ec_embedder.num_classes)
-                ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
-                                              self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
-                anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+#     def forward(
+#             self,
+#             hidden_states,
+#             attention_mask=None,
+#             head_mask=None,
+#             encoder_hidden_states=None,
+#             encoder_attention_mask=None,
+#             past_key_values=None,
+#             use_cache=None,
+#             output_attentions=False,
+#             output_hidden_states=False,
+#             return_dict=True,
+#             **kwargs
+#     ):
 
 
-        if self.gradient_checkpointing and self.training:
-            if use_cache:
-                logger.warning_once(
-                    "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                    "`use_cache=False`..."
-                )
-                use_cache = False
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attentions = () if output_attentions else None
-        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
+#         '''
+#         Annotation-Guided Feature Modulation (AGFM)
+#         '''
 
-        next_decoder_cache = () if use_cache else None
+#         anno_tag = kwargs.get('anno_tag')
+#         anno_embed = None
 
-        '''
-        Residue-Controlled Functional Encoding (RCFE)
-        '''
-        if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0:
+#         if anno_tag is not None:
 
-            motif = anno_tag['seq_cond']
+#             go_class = anno_tag.get('go')
+#             ipr_class = anno_tag.get('ipr')
+#             ec_class = anno_tag.get('ec')
+
+#             seq_num = hidden_states.size(0)
+
+#             def prepare_class(cls, class_num):
+#                 """Replace -1 with class_num and broadcast if needed."""
+#                 if not self.training and cls.dim() == 1:
+#                     cls = cls.unsqueeze(0).repeat(seq_num, 1)
+#                 return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
+
+#             if self.use_go and go_class is not None:
+#                 go_class = prepare_class(go_class, self.go_embedder.num_classes)
+#                 anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
+#                                                 self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
+
+#             if self.use_ipr and ipr_class is not None:
+#                 ipr_class = prepare_class(ipr_class, self.ipr_embedder.num_classes)
+#                 ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
+#                                                self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
+#                 anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
+
+#             if self.use_ec and ec_class is not None:
+#                 ec_class = prepare_class(ec_class, self.ec_embedder.num_classes)
+#                 ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
+#                                               self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
+#                 anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+
+
+#         if self.gradient_checkpointing and self.training:
+#             if use_cache:
+#                 logger.warning_once(
+#                     "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
+#                     "`use_cache=False`..."
+#                 )
+#                 use_cache = False
+#         all_hidden_states = () if output_hidden_states else None
+#         all_self_attentions = () if output_attentions else None
+#         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
+
+#         next_decoder_cache = () if use_cache else None
+
+#         '''
+#         Residue-Controlled Functional Encoding (RCFE)
+#         '''
+#         if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0:
+
+#             motif = anno_tag['seq_cond']
           
-            random_go_embed = anno_embed if (not self.training or random.random() > self.anno_dropout) else None  # motif embedding 多大程度参考 global condition
+#             random_go_embed = anno_embed if (not self.training or random.random() > self.anno_dropout) else None  # motif embedding 多大程度参考 global condition
 
-            for index in range(1, self.copy_blocks_num + 1):
-                motif, motif_skip = self.seq_controlnet[index - 1](hidden_states, attention_mask, motif, random_go_embed)
-                hidden_states = self.layer[index](hidden_states+motif_skip, attention_mask, cond_input=random_go_embed)[0]
+#             for index in range(1, self.copy_blocks_num + 1):
+#                 motif, motif_skip = self.seq_controlnet[index - 1](hidden_states, attention_mask, motif, random_go_embed)
+#                 hidden_states = self.layer[index](hidden_states+motif_skip, attention_mask, cond_input=random_go_embed)[0]
 
-            for index in range(self.copy_blocks_num + 1, len(self.layer)):
-                hidden_states = self.layer[index](hidden_states, attention_mask, cond_input=random_go_embed)[0]
+#             for index in range(self.copy_blocks_num + 1, len(self.layer)):
+#                 hidden_states = self.layer[index](hidden_states, attention_mask, cond_input=random_go_embed)[0]
 
-        else:
-            for i, layer_module in enumerate(self.layer):
-                if output_hidden_states:
-                    all_hidden_states = all_hidden_states + (hidden_states,)
+#         else:
+#             for i, layer_module in enumerate(self.layer):
+#                 if output_hidden_states:
+#                     all_hidden_states = all_hidden_states + (hidden_states,)
 
-                layer_head_mask = head_mask[i] if head_mask is not None else None
-                past_key_value = past_key_values[i] if past_key_values is not None else None
+#                 layer_head_mask = head_mask[i] if head_mask is not None else None
+#                 past_key_value = past_key_values[i] if past_key_values is not None else None
 
-                if self.gradient_checkpointing and self.training:
-                    layer_outputs = self._gradient_checkpointing_func(
-                        layer_module.__call__,
-                        hidden_states,
-                        attention_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        past_key_value,
-                        output_attentions,
-                    )
-                else:
-                    layer_outputs = layer_module(
-                        hidden_states,
-                        attention_mask,
-                        layer_head_mask,
-                        encoder_hidden_states,
-                        encoder_attention_mask,
-                        past_key_value,
-                        output_attentions,
-                        anno_embed,
-                    )
+#                 if self.gradient_checkpointing and self.training:
+#                     layer_outputs = self._gradient_checkpointing_func(
+#                         layer_module.__call__,
+#                         hidden_states,
+#                         attention_mask,
+#                         layer_head_mask,
+#                         encoder_hidden_states,
+#                         encoder_attention_mask,
+#                         past_key_value,
+#                         output_attentions,
+#                     )
+#                 else:
+#                     layer_outputs = layer_module(
+#                         hidden_states,
+#                         attention_mask,
+#                         layer_head_mask,
+#                         encoder_hidden_states,
+#                         encoder_attention_mask,
+#                         past_key_value,
+#                         output_attentions,
+#                         anno_embed,
+#                     )
 
-                hidden_states = layer_outputs[0]
+#                 hidden_states = layer_outputs[0]
 
-                if use_cache:
-                    next_decoder_cache = next_decoder_cache + (layer_outputs[-1],)
-                if output_attentions:
-                    all_self_attentions = all_self_attentions + (layer_outputs[1],)
-                    if self.config.add_cross_attention:
-                        all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+#                 if use_cache:
+#                     next_decoder_cache = next_decoder_cache + (layer_outputs[-1],)
+#                 if output_attentions:
+#                     all_self_attentions = all_self_attentions + (layer_outputs[1],)
+#                     if self.config.add_cross_attention:
+#                         all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
 
-        if self.emb_layer_norm_after:
-            hidden_states = self.emb_layer_norm_after(hidden_states)
+#         if self.emb_layer_norm_after:
+#             hidden_states = self.emb_layer_norm_after(hidden_states)
 
-        if output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
+#         if output_hidden_states:
+#             all_hidden_states = all_hidden_states + (hidden_states,)
 
-        if not return_dict:
-            return tuple(
-                v
-                for v in [
-                    hidden_states,
-                    next_decoder_cache,
-                    all_hidden_states,
-                    all_self_attentions,
-                    all_cross_attentions,
-                ]
-                if v is not None
-            )
-        return BaseModelOutputWithPastAndCrossAttentions(
-            last_hidden_state=hidden_states,
-            past_key_values=next_decoder_cache,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
-            cross_attentions=all_cross_attentions,
-        )
+#         if not return_dict:
+#             return tuple(
+#                 v
+#                 for v in [
+#                     hidden_states,
+#                     next_decoder_cache,
+#                     all_hidden_states,
+#                     all_self_attentions,
+#                     all_cross_attentions,
+#                 ]
+#                 if v is not None
+#             )
+#         return BaseModelOutputWithPastAndCrossAttentions(
+#             last_hidden_state=hidden_states,
+#             past_key_values=next_decoder_cache,
+#             hidden_states=all_hidden_states,
+#             attentions=all_self_attentions,
+#             cross_attentions=all_cross_attentions,
+#         )
 
 class CFPGenEncoderDPLM2(EsmEncoder):
     def __init__(self, config):
@@ -1070,18 +1269,21 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             self.go_cls_dropout_all = config.go_drop
             self.go_cls_dropout_each = 0.1
             self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
+            self.go_embedder.apply(_init_module_weights)
 
         if self.use_ipr:
             self.ipr_class_num = config.ipr_num
             self.ipr_cls_dropout_all = config.ipr_drop
             self.ipr_cls_dropout_each = 0.1
             self.ipr_embedder = FuncTagEmbedder(config.ipr_num, config.hidden_size)
+            self.ipr_embedder.apply(_init_module_weights)
 
         if self.use_ec:
             self.ec_class_num = config.ec_num
             self.ec_cls_dropout_all = config.ec_drop
             self.ec_cls_dropout_each = 0
             self.ec_embedder = FuncTagEmbedder(config.ec_num, config.hidden_size)
+            self.ec_embedder.apply(_init_module_weights)
 
 
         self.layer = nn.ModuleList([AGFMLayerDPLM2(deepcopy(config)) for _ in range(config.num_hidden_layers)])
@@ -1096,8 +1298,8 @@ class CFPGenEncoderDPLM2(EsmEncoder):
         else:
             self.seq_controlnet = None
 
-
-    def drop_anno_ids(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
+    # old drop_anno_ids just add all anno_emb
+    def drop_anno_ids_add(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
         """
         Drop annotation class IDs either at sample level or element level, then compute embeddings.
         """
@@ -1123,6 +1325,35 @@ class CFPGenEncoderDPLM2(EsmEncoder):
         # Combine class embeddings by summation
         return torch.sum(torch.stack(class_embeds, dim=0), dim=0)
 
+    def drop_anno_ids_stack(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
+            """
+            Drop annotation class IDs either at sample level or element level, then compute embeddings.
+            
+            【修改点】不再执行求和，而是返回一个序列 [B, Num_Tags, D]。
+            """
+            if training:
+                # Drop all class IDs in a row with drop_all_prob
+                drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
+                full_replacement = torch.full_like(class_tensor, class_num)
+                class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+
+                # Drop individual elements in class_tensor with drop_each_prob
+                drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
+                class_tensor = torch.where(drop_each, full_replacement, class_tensor)
+
+            class_embeds = [] # 列表元素形状: [B, D]
+            for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
+                class_ids = class_split.squeeze(-1)
+                class_embed = embedder(class_ids)
+                # Zero-out embeddings where class_id == class_num (i.e., dropped)
+                mask = (class_ids == class_num).unsqueeze(-1)
+                class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
+                class_embeds.append(class_embed)
+
+            # 【核心修改】：将 [B, D] 的列表堆叠成 [B, Num_Tags, D] 的序列，不再求和。
+            # stack(..., dim=1) 结果为 [B, Num_Tags, D]
+            return torch.stack(class_embeds, dim=1)
+
 
     def forward(
             self,
@@ -1137,6 +1368,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             output_hidden_states=False,
             return_dict=True,
             type_ids=None,
+            go_type_mask=None,
             **kwargs
     ):
 
@@ -1167,35 +1399,83 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                     cls = cls.unsqueeze(0).repeat(seq_num, 1)
                 return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
 
-            if self.use_go and go_class is not None:
-                if hasattr(self.go_embedder, 'original_module'):
-                    num_classes = self.go_embedder.original_module.num_classes
-                else:
-                    num_classes = self.go_embedder.num_classes
-                go_class = prepare_class(go_class, num_classes)
-                anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
-                                                self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
+            if not self.config.use_attention_store:
 
-            if self.use_ipr and ipr_class is not None:
-                if hasattr(self.ipr_embedder, 'original_module'):
-                    num_classes = self.ipr_embedder.original_module.num_classes
-                else:
-                    num_classes = self.ipr_embedder.num_classes
-                ipr_class = prepare_class(ipr_class, num_classes)
-                ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
-                                               self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
-                anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
+                # old sum all anno_embed
+                if self.use_go and go_class is not None:
+                    if hasattr(self.go_embedder, 'original_module'):
+                        num_classes = self.go_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.go_embedder.num_classes
+                    go_class = prepare_class(go_class, num_classes)
+                    anno_embed = self.drop_anno_ids_add(go_class, self.go_embedder, self.go_class_num,
+                                                    self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
 
-            if self.use_ec and ec_class is not None:
-                if hasattr(self.ec_embedder, 'original_module'):
-                    num_classes = self.ec_embedder.original_module.num_classes
-                else:
-                    num_classes = self.ec_embedder.num_classes
-                ec_class = prepare_class(ec_class, num_classes)
-                ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
-                                              self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
-                anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+                if self.use_ipr and ipr_class is not None:
+                    if hasattr(self.ipr_embedder, 'original_module'):
+                        num_classes = self.ipr_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.ipr_embedder.num_classes
+                    ipr_class = prepare_class(ipr_class, num_classes)
+                    ipr_embed = self.drop_anno_ids_add(ipr_class, self.ipr_embedder, self.ipr_class_num,
+                                                self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
+                    anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
 
+                if self.use_ec and ec_class is not None:
+                    if hasattr(self.ec_embedder, 'original_module'):
+                        num_classes = self.ec_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.ec_embedder.num_classes
+                    ec_class = prepare_class(ec_class, num_classes)
+                    ec_embed = self.drop_anno_ids_add(ec_class, self.ec_embedder, self.ec_class_num,
+                                                self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
+                    anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+
+
+            else:
+                print("use attention store")
+                anno_embeds = [] # 【新增】用于存储所有标签嵌入的列表
+
+                if self.use_go and go_class is not None:
+                    if hasattr(self.go_embedder, 'original_module'):
+                        num_classes = self.go_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.go_embedder.num_classes
+                    go_class = prepare_class(go_class, num_classes)
+                    # drop_anno_ids 现在返回 [B, Num_GO_Tags, D]
+                    go_embed = self.drop_anno_ids_stack(go_class, self.go_embedder, self.go_class_num,
+                                                    self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
+                    anno_embeds.append(go_embed) # 【修改】加入列表，不求和
+
+                if self.use_ipr and ipr_class is not None:
+                    if hasattr(self.ipr_embedder, 'original_module'):
+                        num_classes = self.ipr_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.ipr_embedder.num_classes
+                    ipr_class = prepare_class(ipr_class, num_classes)
+                    ipr_embed = self.drop_anno_ids_stack(ipr_class, self.ipr_embedder, self.ipr_class_num,
+                                                    self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
+                    # anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed # 【删除此行】
+                    anno_embeds.append(ipr_embed) # 【修改】加入列表
+
+                if self.use_ec and ec_class is not None:
+                    if hasattr(self.ec_embedder, 'original_module'):
+                        num_classes = self.ec_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.ec_embedder.num_classes
+                    ec_class = prepare_class(ec_class, num_classes)
+                    ec_embed = self.drop_anno_ids_stack(ec_class, self.ec_embedder, self.ec_class_num,
+                                                    self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
+                    # anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed # 【删除此行】
+                    anno_embeds.append(ec_embed) # 【修改】加入列表
+
+                if anno_embeds: # 【新增】如果存在任何注释嵌入
+                    # 【新增】沿 CondLen 维度（dim=1）拼接所有标签嵌入：[B, CondLen, D]
+                    anno_embed = torch.cat(anno_embeds, dim=1)            
+
+            # print(f"anno_embed: {anno_embed}")
+            print(f"anno_embed.shape: {anno_embed.shape}")
+            # exit()
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -1205,6 +1485,9 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                 )
                 use_cache = False
         all_hidden_states = () if output_hidden_states else None
+
+        output_attentions = output_attentions or (self.config.use_attention_store)
+
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
 
@@ -1228,6 +1511,9 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                 hidden_states = self.layer[index](hidden_states, attention_mask, cond_input=random_go_embed)[0]
 
         else:
+
+            # output_attentions = output_attentions or (self.config.use_attention_store) # 【修改】如果传入了 attention_store，强制输出权重
+
             for i, layer_module in enumerate(self.layer):
                 if output_hidden_states:
                     all_hidden_states = all_hidden_states + (hidden_states,)
@@ -1249,6 +1535,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                         anno_embed,
                         type_ids,
                         motif_struct_emb,
+                        go_type_mask,
                     )
                 else:
                     layer_outputs = layer_module(
@@ -1262,6 +1549,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                         anno_embed,
                         type_ids,
                         motif_struct_emb,
+                        go_type_mask,
                     )
 
                 hidden_states = layer_outputs[0]
@@ -1527,6 +1815,7 @@ class ModifiedEsmModelDPLM2(EsmModel):
             output_hidden_states: Optional[bool] = None,
             return_dict: Optional[bool] = None,
             type_ids: Optional[torch.Tensor] = None,
+            go_type_mask=None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
 
     
@@ -1574,6 +1863,10 @@ class ModifiedEsmModelDPLM2(EsmModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         
+        # print(attention_mask.shape)
+        # print(attention_mask)
+        # exit()
+
         # TODO: maybe bug
         if attention_mask.dim() == 4:
             extended_attention_mask = attention_mask
@@ -1649,6 +1942,7 @@ class ModifiedEsmModelDPLM2(EsmModel):
             return_dict=return_dict,
             anno_tag=input_ids,
             type_ids=type_ids,
+            go_type_mask=go_type_mask,
         )
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
@@ -1774,6 +2068,7 @@ class EsmForCFPGEN_DPLM2(EsmForMaskedLM):
                 return_dict=None,
                 encoder_hidden_states=None,
                 encoder_attention_mask=None,
+                go_type_mask=None,
             ):
 
 
@@ -1791,6 +2086,7 @@ class EsmForCFPGEN_DPLM2(EsmForMaskedLM):
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
             type_ids=type_ids,
+            go_type_mask=go_type_mask,
         )
         sequence_output = outputs[0]
         logits = self.lm_head(sequence_output)

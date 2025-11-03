@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from math import isnan
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -221,6 +222,46 @@ class RDMCrossEntropyLoss(nn.CrossEntropyLoss):
         
         return loss, logging_output
 
+def get_attn_loss(attn_map_loss):
+    bce_loss_func = nn.BCEWithLogitsLoss(reduction='none')
+    struct_attn, aa_attn = attn_map_loss['attn_map'].chunk(2, dim=2)
+    struct_attn_segment, aa_attn_segment = attn_map_loss['go_type_segments'].chunk(2, dim=2)
+    struct_attn_segment_mask, aa_attn_segment_mask = attn_map_loss['go_type_segments_mask'].chunk(2, dim=2)
+
+    struct_attn_loss = bce_loss_func(struct_attn, struct_attn_segment)
+    aa_attn_loss = bce_loss_func(aa_attn, aa_attn_segment)
+
+
+    print(f"struct_attn_loss: {struct_attn_loss.shape}")
+    print(f"aa_attn_loss: {aa_attn_loss.shape}")
+
+    struct_attn_sum = (struct_attn_loss * struct_attn_segment_mask).sum(dim=(1, 2))  # Shape: (B)
+    struct_mask_sum = struct_attn_segment_mask.sum(dim=(1, 2))                    # Shape: (B)
+
+    print(f"struct_attn_sum: {struct_attn_sum.shape}")
+    print(f"struct_mask_sum: {struct_mask_sum.shape}")
+
+    struct_attn_loss_per_sample = struct_attn_sum / (struct_mask_sum + 1e-5)
+
+    # 2. 针对 aa_attn_loss 进行逐样本（Per-Sample）归一化
+    aa_attn_sum = (aa_attn_loss * aa_attn_segment_mask).sum(dim=(1, 2))      # Shape: (B)
+    aa_mask_sum = aa_attn_segment_mask.sum(dim=(1, 2))                        # Shape: (B)
+    # 结果 aa_attn_loss_per_sample 的 shape: (B)
+    aa_attn_loss_per_sample = aa_attn_sum / (aa_mask_sum + 1e-5)
+
+    # 3. 计算最终的 attn_loss
+    # 3.1 逐样本加权: (B) * (B) -> (B)
+    struct_weighted_loss = struct_attn_loss_per_sample * attn_map_loss['struct_weight_point']
+    aa_weighted_loss = aa_attn_loss_per_sample * attn_map_loss['aatype_weight_point']
+
+    # 3.2 在 Batch 维度上求均值（最终的 Loss 标量）
+    attn_loss = (struct_weighted_loss + aa_weighted_loss).mean()
+
+    print(f"attn_loss: {attn_loss}")
+    # exit()
+
+    return attn_loss
+
 class StructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
     def forward(
         self,
@@ -231,6 +272,7 @@ class StructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         cal_constant_loss=False,
         watch_t1_t2_loss=False,
         hidden_states=None,
+        attn_map_loss=None,
     ) -> Tensor:
         """
         scores: [N, L, C], unnormalized scores
@@ -358,11 +400,12 @@ class StructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
 
-    def __init__(self, label_smoothing=0.1, ignore_index=-100, hidden_dim=1280, memory_size=512, temperature=0.07, scale=0.1, start_step=10000):
+    def __init__(self, label_smoothing=0.1, ignore_index=-100, hidden_dim=1280, memory_size=512, temperature=0.5, scale=0.1, start_step=10000, attn_scale=0, attn_start_step=10000):
         super().__init__(label_smoothing=label_smoothing, ignore_index=ignore_index)
         self.temperature = temperature
         self.memory_size = memory_size
         self.scale = scale
+        self.attn_scale = attn_scale
 
         # 全局 memory bank
         # self.register_buffer("memory_bank", torch.empty(0, hidden_dim))
@@ -383,10 +426,12 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         self.time = 0
 
         self.start_time = start_step
+        self.attn_start_time = attn_start_step
 
     @torch.no_grad()
     def _update_memory_bank(self, features, labels):
         """更新全局 memory bank（FIFO）"""
+        # 检查是否有nan的features
         if self.memory_bank.numel() == 0:
             self.memory_bank = features.detach()
             self.memory_labels = labels.detach()
@@ -399,6 +444,10 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
             self.memory_bank = new_features
             self.memory_labels = new_labels
 
+        if torch.isnan(self.memory_bank).any():
+            print(f"memory_bank contains nan: {self.memory_bank}")
+            raise ValueError("memory_bank contains nan")
+
     @torch.no_grad()
     def _update_latest_label_bank(self, features, labels):
         """更新每个 label 的最新样本"""
@@ -406,6 +455,8 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
             # print(f"update label {l} with feature {f}")
             self.latest_label_bank[l.item()] = f.detach()
             # self.latest_label_bank[l.item()].requires_grad = False
+            if torch.isnan(self.latest_label_bank[l.item()]).any():
+                raise ValueError(f"latest_label_bank[{l.item()}] contains nan")
 
     def get_motif_hidden_states_and_labels(self, hidden_states, motif_position_and_label_list):
         """
@@ -425,11 +476,28 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         for i, (hidden_state, motif_dict) in enumerate(zip(hidden_states, motif_position_and_label_list)):
             # hidden_state: [seq_len, hidden_dim]
             for (start, end), label in motif_dict.items():
+
+                if end - start <= 5:
+                    print(f"bad start:{start} end:{end} label:{label}")
+                    continue
                 # 提取motif区域的hidden states
                 motif_region = hidden_state[start:end]  # [motif_len, hidden_dim]
+
+                if torch.isnan(motif_region).any():
+                    print(f"motif_region contains nan: {motif_region}")
+                    print(f"start: {start}, end: {end}, label: {label}")
+                    print(f"hidden_state: {hidden_state}")
+                    print(f"shape hidden_state: {hidden_state.shape}")
+                    raise ValueError("motif_region contains nan")
                 
                 # 对motif区域进行池化（平均池化）
                 motif_embedding = torch.mean(motif_region, dim=0)  # [hidden_dim]
+
+                if torch.isnan(motif_embedding).any():
+                    print(f"motif_embedding contains nan: {motif_embedding}")
+                    print(f"start: {start}, end: {end}, label: {label}")
+                    print(f"motif_region: {motif_region}")
+                    raise ValueError("motif_embedding contains nan")
                 
                 all_motif_states.append(motif_embedding)
                 all_motif_labels.append(label)
@@ -440,6 +508,10 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         
         motif_hidden_states = torch.stack(all_motif_states)  # [total_motifs, hidden_dim]
         motif_labels = torch.tensor(all_motif_labels, device=motif_hidden_states.device, dtype=torch.long)
+
+        if torch.isnan(motif_hidden_states).any():
+            print(f"motif_hidden_states contains nan: {motif_hidden_states}")
+            raise ValueError("motif_hidden_states contains nan")
         
         return motif_hidden_states, motif_labels
 
@@ -453,6 +525,7 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         cal_constant_loss=False,
         watch_t1_t2_loss=False,
         hidden_states=None,
+        attn_map_loss=None,
     ) -> Tensor:
         """
         scores: [N, L, C], unnormalized scores
@@ -461,6 +534,15 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         """
 
         device = scores_dict['struct'][0].device
+        self.time += 1
+
+        # attn_map_loss
+        if attn_map_loss is not None and self.time >= self.attn_start_time:
+            print("start attn loss")
+            attn_loss = get_attn_loss(attn_map_loss) * self.attn_scale
+            print(f"attn_loss: {attn_loss}")
+        else:
+            attn_loss = None
 
         # contrast loss
 
@@ -474,10 +556,10 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
         
         if len(labels) != 0:
             if self.time < self.start_time:
-                self.time += 1
                 # print("start update memory bank")
+                self._update_latest_label_bank(features, labels)     
                 self._update_memory_bank(features, labels)
-                self._update_latest_label_bank(features, labels)            
+                       
             else:
                 print("start contrast loss")
 
@@ -488,7 +570,11 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 num_motifs_per_seq = []
                 for motif_dict in hidden_states['motif']:
                     # motif_dict.items() 返回的是 (start, end) : label
-                    num_motifs_per_seq.append(len(motif_dict))
+                    length = 0
+                    for start, end in motif_dict.keys():
+                        if end - start > 5:
+                            length += 1
+                    num_motifs_per_seq.append(length)
 
                 # 2. 将权重根据每个序列的motif数量进行扩展
                 expanded_weights = []
@@ -523,8 +609,13 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 latest_feats = []
                 latest_labs = []
                 if self.latest_label_bank:
-                    latest_feats = torch.stack(list(self.latest_label_bank.values())).to(device)
-                    latest_labs = torch.tensor(list(self.latest_label_bank.keys()), dtype=torch.long, device=device)
+                    for label in labels:
+                        if label in self.latest_label_bank:
+                            latest_feats.append(self.latest_label_bank[label])
+                            latest_labs.append(label)
+                    if len(latest_feats) > 0:
+                        latest_feats = torch.stack(latest_feats).to(device)
+                        latest_labs = torch.tensor(latest_labs, dtype=torch.long, device=device)
 
                 # 拼接 batch + global memory + latest label memory
                 parts = [features]
@@ -549,14 +640,14 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 
                 # use cosine similarity
                 # normalize with eps
-                # features = F.normalize(features, dim=-1, eps=1e-4)
-                # all_features = F.normalize(all_features, dim=-1, eps=1e-4)
+                features = F.normalize(features, dim=-1, eps=1e-4)
+                all_features = F.normalize(all_features, dim=-1, eps=1e-4)
 
-                # sim = torch.matmul(features, all_features.T) / self.temperature
+                sim = torch.matmul(features, all_features.T) / self.temperature
 
                 # use euclidean distance
-                dist = torch.cdist(features, all_features, p=2)  # [B, B+M+L]
-                sim = -dist / self.temperature  # 负距离作为相似度
+                # dist = torch.cdist(features, all_features, p=2)  # [B, B+M+L]
+                # sim = -dist / self.temperature  # 负距离作为相似度
 
                 # mask
                 label_eq = labels.unsqueeze(1) == all_labels.unsqueeze(0)
@@ -571,7 +662,7 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 den_mask = ~self_mask  # include all except self (positives + negatives)
 
 
-                NEG_INF = -1e6
+                NEG_INF = -1e4
                 sim_den = sim.clone()
                 sim_den[~den_mask] = NEG_INF  # exclude self
 
@@ -602,12 +693,30 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
                 print(f"contrast_loss_mean: {contrast_loss_mean}")
                 if torch.isnan(contrast_loss_mean):
+                    torch.set_printoptions(profile="full", sci_mode=False)
                     print(f"contrast_loss_mean is nan")
                     print(f"valid: {valid}")
                     print(f"loss_per_sample: {loss_per_sample}")
+                    print(f"num_logsumexp: {num_logsumexp}")
+                    print(f"den_logsumexp: {den_logsumexp}")
+                    print(f"num_logsumexp[valid]: {num_logsumexp[valid]}")
+                    print(f"den_logsumexp[valid]: {den_logsumexp[valid]}")
+                    print(f"sim_pos: {sim_pos}")
+                    print(f"sim_pos[valid]: {sim_pos[valid]}")
+                    print(f"sim_den: {sim_den}")
+                    print(f"sim_den[valid]: {sim_den[valid]}")
+                    print(f"sim: {sim}")
+                    print(f"sim[valid]: {sim[valid]}")
+                    print(f"sim[valid][valid]: {sim[valid][valid]}")
+                    print(f"sim[valid][valid].shape: {sim[valid][valid].shape}")
                     print(f"weighted_loss_per_sample: {weighted_loss_per_sample}")
                     print(f"struct_weight_point: {struct_weight_point}")
                     print(loss_per_sample[valid])
+
+                    print(f"features: {features}")
+                    print(f"features.shape: {features.shape}")
+                    print(f"all_features: {all_features}")
+                    print(f"all_features.shape: {all_features.shape}")
                     exit()
 
         # dplm2 diffusion crossentropy loss start
@@ -701,9 +810,15 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 scores_dict, target_dict, label_mask_dict, weights_dict
             )
 
+            logging_output_dict["original_loss"] = losses
+
             if contrast_loss_mean is not None:
                 logging_output[f"contrast_loss"] = contrast_loss_mean.data
                 loss += contrast_loss_mean
+
+            if attn_loss is not None:
+                logging_output_dict["attn_loss"] = attn_loss.data
+                losses += attn_loss            
                 
             return loss, logging_output
         else:
@@ -732,7 +847,13 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
             ]
             logging_output_dict["ppl"] = logging_output[f"{k}/ppl"]
 
+            logging_output_dict["original_loss"] = losses / len(scores_dict.keys())
+
             if contrast_loss_mean is not None:
                 logging_output_dict["contrast_loss"] = contrast_loss_mean.data
                 losses += contrast_loss_mean
+            if attn_loss is not None:
+                logging_output_dict["attn_loss"] = attn_loss.data
+                losses += attn_loss
+            
             return losses / len(scores_dict.keys()), logging_output_dict
