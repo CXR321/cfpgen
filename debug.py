@@ -161,5 +161,47 @@ path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfam
 # print(batch['go_type_segments'])
 # print(batch['go_type_segments_mask'])
 
-a = torch.tensor([[True,False],[True,False]])
-print(a.squeeze(-1))
+# a = []
+# a.append(torch.tensor([[True,False,True],[True,False,True]]))
+# a.append(torch.tensor([[True,False,True],[True,False,True]]))
+# a.append(torch.tensor([[True,False,True],[True,False,True]]))
+# a.append(torch.tensor([[True,False,True],[True,False,True]]))
+# a = torch.tensor([[[True,False],[True,False]],[[True,False],[True,False]]])
+# a = torch.zeros(10)
+# a = a.repeat(2, 1)
+
+# a = torch.tensor([True,False,True])
+# b = torch.tensor([False,True,True])
+
+# a = torch.tensor(1.0, requires_grad=True)
+# b = torch.tensor(2.0)
+
+
+# c = a * b
+
+# c.retain_grad()
+
+# d = a.detach()
+
+# c.backward()
+
+# print(c.grad)
+# # print(a.squeeze(-1))
+# # print(torch.stack(a, dim=1).shape)
+# print(torch.max(a, b))
+
+import torch
+
+# 假设 L=400 （根据你之前提供的展平后的长度来估计）
+L = 4
+# 模拟你的原始张量：形状为 (1, L, 3)，且每行都是 [1., 0., 0.]
+attn_tensor = torch.tensor([[[1., 0., 0.] for _ in range(L)]])
+
+# 核心操作：调换第 1 维和第 2 维
+new_tensor = attn_tensor.permute(0, 2, 1)
+new_tensor = attn_tensor.reshape(1,3,4)
+# 或者使用 transpose 方法（在 PyTorch 中，transpose只接受两个维度索引）
+# new_tensor = att
+# n_tensor.transpose(1, 2)
+print(attn_tensor)
+print(new_tensor)

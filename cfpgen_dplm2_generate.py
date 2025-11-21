@@ -85,6 +85,9 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
     ipr_labels = sample['ipr_mapped']
     ec_labels = sample.get('EC_mapped', None)
 
+    if config.get('use_go_null_token', False):
+        go_labels = [-2] + go_labels
+
     if config.get('use_seq_motif', False):
         motif_info = sample.get('motif', [])
         if motif_info:

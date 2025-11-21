@@ -558,8 +558,8 @@ def register_attention_control(model: nn.Module, controller: AttentionStore):
             # print(f"hook ok in {module.__class__.__name__}, {layer_name}")
             # print(f"hook ouput: {output}")
             if len(output) > 1 and output[1] is not None:
-                attn_weights: torch.Tensor = output[1]
-                num_heads = module.num_heads
+                attn_weights: torch.Tensor = output[1].clone()
+                # num_heads = module.num_heads
 
                 # print(f"attn_weights.shape: {attn_weights.shape}")
                 # print(f"num_heads: {num_heads}")
@@ -568,6 +568,7 @@ def register_attention_control(model: nn.Module, controller: AttentionStore):
                 # 注意力权重的形状是 (batch_size, seq_len, funclen)
 
                 attn_map = attn_weights
+                # print(f"attn-weights: {attn_map}")
                                
                 controller.attention_maps[layer_name] = attn_map
 
@@ -576,6 +577,10 @@ def register_attention_control(model: nn.Module, controller: AttentionStore):
     # 遍历 CFPGenEncoderDPLM2 的所有 AGFMLayerDPLM2 层 (即 model.layer)
     for i, layer in enumerate(model.layer):
         # 仅对启用了功能 Cross-Attention 的层进行 Hook
+
+        if i != 32:
+            continue
+
         if hasattr(layer, 'use_func_cross_attn') and layer.use_func_cross_attn:
             # 找到 func_cross_attn 模块
             module = layer.cross_attn 
@@ -604,6 +609,107 @@ def _init_module_weights(module, initializer_range=0.02):
             module.weight.data.fill_(1.0)
         if hasattr(module.bias, 'data'):
             module.bias.data.zero_()
+
+# def init_cross_attn_with_bias(multihead_attn):
+#     # 初始化query和key的投影矩阵，增加区分度
+#     nn.init.xavier_uniform_(multihead_attn.in_proj_weight, gain=1.0)
+#     nn.init.xavier_uniform_(multihead_attn.out_proj.weight, gain=1.0)
+    
+#     # 为in_proj_weight添加偏置，强化query-key的差异
+#     with torch.no_grad():
+#         # 分离query, key, value的权重 (前2/3是query+key，后1/3是value)
+#         hidden_size = multihead_attn.embed_dim
+#         qk_weight = multihead_attn.in_proj_weight[:2*hidden_size]
+        
+#         # 添加一个促进稀疏性的偏置
+#         # 这会让某些attention head更关注特定的位置
+#         bias_matrix = torch.randn_like(qk_weight) * 0.1
+#         multihead_attn.in_proj_weight[:2*hidden_size] += bias_matrix
+    
+#     # 初始化偏置项
+#     if multihead_attn.in_proj_bias is not None:
+#         nn.init.constant_(multihead_attn.in_proj_bias, 0.1)
+#     nn.init.constant_(multihead_attn.out_proj.bias, 0.0)
+
+
+class MultiHeadCrossAttention(nn.Module):
+    """
+    一个功能完整的 Multi-Head Cross-Attention 模块，支持 Key Padding Mask。
+    """
+    def __init__(self, d_model, n_heads):
+        super().__init__()
+        
+        assert d_model % n_heads == 0
+        
+        self.n_heads = n_heads
+        self.d_k = d_model // n_heads # 每个头的 Q/K 维度
+        self.d_v = d_model // n_heads # 每个头的 V 维度
+        self.d_model = d_model
+
+        # Q, K, V 的总线性投影层
+        self.query_proj = nn.Linear(d_model, d_model, bias=False)
+        self.key_proj = nn.Linear(d_model, d_model, bias=False)
+        self.value_proj = nn.Linear(d_model, d_model, bias=False) 
+
+        # 最终输出投影层
+        self.output_proj = nn.Linear(d_model, d_model, bias=False)
+
+    def forward(self, query_input, key_input, value_input, key_padding_mask=None):
+        """
+        Args:
+            query_input (Tensor):   (B, N_Q, D_Model)  # Q 的输入
+            key_input (Tensor):     (B, N_K, D_Model)  # K 的输入
+            value_input (Tensor):   (B, N_K, D_Model)  # V 的输入
+            key_padding_mask (Tensor): (B, N_K)      # 掩码张量，True/1 表示要忽略的位置 (Padding)
+                                                     # 默认为 None (无掩码)
+
+        Returns:
+            output (Tensor):       (B, N_Q, D_Model) - 最终的上下文向量
+            attn_weights (Tensor): (B, N_Q, N_K)     - 所有头的平均注意力权重
+        """
+        B, N_Q, D = query_input.shape
+        _, N_K, _ = key_input.shape
+        
+        # 1. 线性投影和分头 (与之前相同)
+        Q = self.query_proj(query_input).view(B, N_Q, self.n_heads, self.d_k).transpose(1, 2)
+        K = self.key_proj(key_input).view(B, N_K, self.n_heads, self.d_k).transpose(1, 2)
+        V = self.value_proj(value_input).view(B, N_K, self.n_heads, self.d_v).transpose(1, 2)
+        
+        # 2. 相似度计算 (Scaled Dot Product)
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+        # scores 形状为 (B, H, N_Q, N_K)
+
+        # 3. ⭐️ 应用 Key Padding Mask 逻辑 ⭐️
+        if key_padding_mask is not None:
+            # Mask 形状为 (B, N_K)。我们需要将其扩展以匹配 scores 的形状 (B, H, N_Q, N_K)
+            # 扩展到 (B, 1, 1, N_K)，然后广播到所有头 (H) 和所有 Query 位置 (N_Q)
+            
+            # Key Padding Mask 应该是一个布尔张量 (True 表示 mask) 或 0/1 张量 (1 表示 mask)
+            # 我们假设输入的是 True/False (或 1/0)
+            
+            # unsqueeze(1) 增加 Head 维度 (H=1)
+            # unsqueeze(2) 增加 Query 维度 (N_Q=1)
+            mask_view = key_padding_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, N_K)
+
+            # 使用 mask_view 填充 scores。True/1 的位置会被填充为 -1e9
+            # 这样 Softmax(MASK_VALUE) 就会趋近于 0
+            MASK_VALUE = -1e9
+            scores.masked_fill_(mask_view, MASK_VALUE)
+
+        # 4. Softmax 得到 Attention Weights (A)
+        attn_weights_all_heads = F.softmax(scores, dim=-1) # (B, H, N_Q, N_K)
+
+        # 5. 计算 Context Vector (C)
+        context_vectors = torch.matmul(attn_weights_all_heads, V) # (B, H, N_Q, D_V)
+
+        # 6. 拼接 Context Vector 和最终输出投影 (与之前相同)
+        context_vectors = context_vectors.transpose(1, 2).contiguous().view(B, N_Q, self.d_model)
+        output = self.output_proj(context_vectors) 
+        
+        # 返回平均注意力权重
+        avg_attn_weights = attn_weights_all_heads[:,0,:,:]
+
+        return output, avg_attn_weights
 
 class NonSoftmaxMultiheadAttention(nn.Module):
     def __init__(self, embed_dim, num_heads, dropout=0.0, bias=True):
@@ -667,6 +773,7 @@ class NonSoftmaxMultiheadAttention(nn.Module):
             attn_scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling 
             # attn_scores 形状: [B, H, Lq, Lk]
 
+
             # print(f"key_padding_mask: {key_padding_mask}")
             
             # 5. 应用 Key Padding Mask (如果存在)
@@ -680,16 +787,7 @@ class NonSoftmaxMultiheadAttention(nn.Module):
             
             # 6. ⚠️ 关键修改：应用 Attention Mask (如果存在)
             if attn_mask is not None:
-
-                # print(f"attn_mask.shape: {attn_mask[:, 0, 0, :].shape}")
-                # print(f"attn_mask: {attn_mask}")
-                attn_scores += attn_mask[:, 0, 0, :].unsqueeze(1).unsqueeze(-1) # [B, Lq] -> 广播到 [B, H, Lq, Lk]
-                # 如果 mask 已经是 [B, Lq, Lk]，则需要 [B, 1, Lq, Lk] 广播
-                # 为了最健壮，假设 mask 形状兼容 [B, H, Lq, Lk]
-                
-                # 如果您使用的 mask 是 [Lq, Lk] 并且只包含 0 或 -inf，最稳健的做法是：
-                # attn_scores = attn_scores + attn_mask 
-                pass # 假设 mask 已经是可加的形状
+                raise NotImplementedError("Attention mask is not supported for NonSoftmaxMultiheadAttention")
 
             # 7. 应用 Sigmoid 激活（非 Softmax）
             # 低得分（如 -1e9）经过 Sigmoid 后会非常接近 0，从而实现忽略 Mask 位置的目的。
@@ -739,6 +837,8 @@ class AGFMLayerDPLM2(nn.Module):
         self.use_motif_struct_emb = getattr(config, "use_motif_struct_emb", False)
         self.use_static_scale = getattr(config, "use_static_scale", False)
         self.use_attention_store = getattr(config, "use_attention_store", False)
+        self.use_go_null_token = getattr(config, "use_go_null_token", False)
+        self.use_motif_head = getattr(config, "use_motif_head", False)
 
         # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
         # print(f"use static scale: {self.use_static_scale}")
@@ -749,16 +849,17 @@ class AGFMLayerDPLM2(nn.Module):
             # === 新增：功能 cross-attn 模块（F -> tokens）===
             self.func_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=True)
             self.cross_attn_ln = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-            # self.cross_attn = nn.MultiheadAttention(
-            #     embed_dim=config.hidden_size,
-            #     num_heads=config.num_attention_heads,
-            #     batch_first=True,
-            # )
-            self.cross_attn = NonSoftmaxMultiheadAttention(
+            self.cross_attn = nn.MultiheadAttention(
                 embed_dim=config.hidden_size,
                 num_heads=config.num_attention_heads,
+                batch_first=True,
             )
-            # 残差缩放（可学，初始1.0；你也可以设为0.0实现“渐进启用”）
+            # self.cross_attn = NonSoftmaxMultiheadAttention(
+            #     embed_dim=config.hidden_size,
+            #     num_heads=config.num_attention_heads,
+            # )
+            # self.cross_attn = MultiHeadCrossAttention(d_model=config.hidden_size, n_heads=config.num_attention_heads)
+
 
             if not self.use_static_scale:
                 self.cross_res_scale = nn.Parameter(torch.tensor(1.0))
@@ -766,6 +867,7 @@ class AGFMLayerDPLM2(nn.Module):
                 self.cross_res_scale = torch.tensor(1.0)
 
             self.cross_attn.apply(_init_module_weights)
+            # init_cross_attn_with_bias(self.cross_attn)
             self.func_proj.apply(_init_module_weights)
             self.cross_attn_ln.apply(_init_module_weights)
 
@@ -853,10 +955,27 @@ class AGFMLayerDPLM2(nn.Module):
 
                 # 预归一化 + CrossAttn
                 q = self.cross_attn_ln(attention_output)           # [B, L, D]
+
+                # for multi-head attention
+                # cross_out, cross_w = self.cross_attn(
+                #     query=q, key=func_tok, value=func_tok,
+                #     attn_mask=None, key_padding_mask=~go_type_mask,
+                #     need_weights=True,
+                # )  # cross_out: [B, L, D]
                 cross_out, cross_w = self.cross_attn(
                     query=q, key=func_tok, value=func_tok,
-                    attn_mask=attention_mask, key_padding_mask=go_type_mask
+                    attn_mask=None, key_padding_mask=None,
+                    need_weights=True,
                 )  # cross_out: [B, L, D]
+                # cross_out, cross_w = self.cross_attn(
+                #     query_input=q, key_input=func_tok, value_input=func_tok
+                # )  # cross_out: [B, L, D]
+
+
+                # cross_out, cross_w = self.cross_attn(
+                #     query=q, key=func_tok, value=func_tok,
+                #     attn_mask=None, key_padding_mask=go_type_mask
+                # )  # cross_out: [B, L, D]
 
                 # 残差 + 门控（AA/Struct 差异化）
                 # attention_output = attention_output + self.cross_res_scale * cross_out
@@ -1264,12 +1383,17 @@ class CFPGenEncoderDPLM2(EsmEncoder):
 
         self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
 
+        self.use_go_null_token = config.use_go_null_token
+
         if self.use_go:
             self.go_class_num = config.go_num
             self.go_cls_dropout_all = config.go_drop
             self.go_cls_dropout_each = 0.1
             self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
             self.go_embedder.apply(_init_module_weights)
+            if self.use_go_null_token:
+                self.go_null_token = nn.Parameter(torch.zeros(config.hidden_size))
+                self.go_null_token.data.normal_(mean=0.0, std=0.02)
 
         if self.use_ipr:
             self.ipr_class_num = config.ipr_num
@@ -1313,7 +1437,13 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
             class_tensor = torch.where(drop_each, full_replacement, class_tensor)
 
+        b_size = class_tensor.size(0)
         class_embeds = []
+        if self.use_go_null_token:
+            # print(f"use_go_null_token true")
+            raise NotImplementedError("use_go_null_token not implemented")
+            class_embeds.append(self.go_null_token.repeat(b_size, 1))
+
         for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
             class_ids = class_split.squeeze(-1)
             class_embed = embedder(class_ids)
@@ -1344,10 +1474,22 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             class_embeds = [] # 列表元素形状: [B, D]
             for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
                 class_ids = class_split.squeeze(-1)
+
+                if self.use_go_null_token:
+                    mask_null_token = (class_ids == -2)
+                    class_ids = torch.where(mask_null_token, class_num, class_ids)
+                    mask_null_token = mask_null_token.unsqueeze(-1)
+                
                 class_embed = embedder(class_ids)
                 # Zero-out embeddings where class_id == class_num (i.e., dropped)
                 mask = (class_ids == class_num).unsqueeze(-1)
                 class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
+
+                if self.use_go_null_token:
+                    # print(f"use_go_null_token true")
+                    class_embed = torch.where(mask_null_token, self.go_null_token.repeat(class_embed.size(0), 1), class_embed)
+                    # print(class_embed)
+
                 class_embeds.append(class_embed)
 
             # 【核心修改】：将 [B, D] 的列表堆叠成 [B, Num_Tags, D] 的序列，不再求和。
@@ -1474,7 +1616,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                     anno_embed = torch.cat(anno_embeds, dim=1)            
 
             # print(f"anno_embed: {anno_embed}")
-            print(f"anno_embed.shape: {anno_embed.shape}")
+            # print(f"anno_embed.shape: {anno_embed.shape}")
             # exit()
 
         if self.gradient_checkpointing and self.training:

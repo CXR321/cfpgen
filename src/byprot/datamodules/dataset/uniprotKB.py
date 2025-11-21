@@ -512,9 +512,10 @@ class DPLMCollater(object):
         return batch
 
 class DPLM2Collater(object):
-    def __init__(self):
+    def __init__(self, use_go_null_token=False):
         self.tokenizer = DPLM2Tokenizer.from_pretrained("airkingbd/dplm2_650m")
         self.alphabet = EsmTokenizer.from_pretrained('facebook/esm2_t30_150M_UR50D')
+        self.use_go_null_token = use_go_null_token
 
     def __call__(self, raw_batch):
         
@@ -551,15 +552,26 @@ class DPLM2Collater(object):
         # pdding for labels
         max_go_len = max(len(go_list) for go_list in go_type)
         max_ipr_len = max(len(ipr_list) for ipr_list in ipr_type)
-        padded_go_type = [go_list + [-1] * (max_go_len - len(go_list)) for go_list in go_type]
+
+        if self.use_go_null_token:
+            padded_go_type = [[-2] + go_list + [-1] * (max_go_len - len(go_list)) for go_list in go_type]
+        else:
+            padded_go_type = [go_list + [-1] * (max_go_len - len(go_list)) for go_list in go_type]
+        
+        # padded_go_type = [go_list + [-1] * (max_go_len - len(go_list)) for go_list in go_type]
         padded_ipr_type = [ipr_list + [-1] * (max_ipr_len - len(ipr_list)) for ipr_list in ipr_type]
 
         padded_go_type = torch.tensor(padded_go_type)
         padded_ipr_type = torch.tensor(padded_ipr_type)
 
         go_type_mask = torch.zeros(padded_go_type.shape, dtype=torch.bool)
-        for i, go_list in enumerate(go_type):
-            go_type_mask[i, :len(go_list)] = True
+
+        if self.use_go_null_token:
+            for i, go_list in enumerate(go_type):
+                go_type_mask[i, :len(go_list)+1] = True
+        else:
+            for i, go_list in enumerate(go_type):
+                go_type_mask[i, :len(go_list)] = True
 
         cfpgen_batch = {
             'input_ids':  batch['input_ids'],
@@ -653,9 +665,12 @@ class DPLM2Collater(object):
         # print(f"seq_len: {seq_len}")
 
         for single_p_go_type_segments, raw_len in zip(go_type_segments, raw_lens):
+            combined_segment_gt = torch.zeros(2*seq_len, dtype=torch.float)
             single_gt = []
             single_gt_mask = []
+            ignore_null_token = False
             for segement in single_p_go_type_segments:
+                # print(f"segement: {segement}")
                 if segement is not None:
                     gt = torch.zeros(2*seq_len, dtype=torch.float)
                     gt_mask = torch.zeros(2*seq_len, dtype=torch.bool)
@@ -666,11 +681,45 @@ class DPLM2Collater(object):
                     gt_mask[1+seq_len:raw_len-1+seq_len] = True
 
                     # print(f"rawlen: {raw_len}, start: {start}, end: {end}")
+                    combined_segment_gt = torch.max(combined_segment_gt, gt)
                     single_gt.append(gt)
                     single_gt_mask.append(gt_mask)
                 else:
+                    ignore_null_token = True
                     single_gt.append(torch.zeros(2*seq_len, dtype=torch.float))
                     single_gt_mask.append(torch.zeros(2*seq_len, dtype=torch.bool))
+
+            if self.use_go_null_token:
+
+                gt_null_token = 1.0 - combined_segment_gt
+
+                if ignore_null_token:
+                    gt_null_token = torch.zeros(2*seq_len, dtype=torch.float)
+                    gt_null_token_mask = torch.zeros(2*seq_len, dtype=torch.bool)
+                else:
+                    gt_null_token_mask = torch.zeros(2*seq_len, dtype=torch.bool)
+                    gt_null_token_mask[1:raw_len-1] = True
+                    gt_null_token_mask[1+seq_len:raw_len-1+seq_len] = True
+
+                single_gt = [gt_null_token] + single_gt
+                single_gt_mask = [gt_null_token_mask] + single_gt_mask
+            
+            # i = 0
+
+            # pstr = ""
+            # for gt in single_gt:
+            #     # print(f"gt{i} {gt}")
+            #     pstr += f"gt{i} {gt[:raw_len]}\n"
+            #     i+=1
+            
+            # torch.set_printoptions(profile="full")
+            # print(f"single_gt: {pstr}")
+            # print(single_p_go_type_segments)
+            # print(batch)
+            # exit()
+
+
+
             for _ in range(max_gotype_len-len(single_p_go_type_segments)):
                 single_gt.append(torch.zeros(2*seq_len, dtype=torch.float))
                 single_gt_mask.append(torch.zeros(2*seq_len, dtype=torch.bool))
@@ -729,8 +778,9 @@ def setup_dataloader_dplm2(
         rank=0, world_size=1,
         mini_run=False,
         max_len=512,
+        use_go_null_token=False,
     ) -> DataLoader:
-    collater = DPLM2Collater()
+    collater = DPLM2Collater(use_go_null_token=use_go_null_token)
     if mini_run:
         dl = DataLoader(dataset=ds, shuffle=True, batch_size=1, num_workers=0, collate_fn=collater)
     else:

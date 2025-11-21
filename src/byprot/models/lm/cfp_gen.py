@@ -93,6 +93,8 @@ class CFPGENConfig_DPLM2:
     use_static_scale: bool = field(default=False)
 
     use_attention_store: bool = field(default=False)
+    use_go_null_token: bool = field(default=False)
+    use_motif_head: bool = field(default=False)
 
 
 @register_model('cfp_gen')
@@ -715,6 +717,23 @@ class CondDiffusionProteinLanguageModel(nn.Module):
         return decoder_out['output_tokens'], decoder_out['output_scores']
 
 
+class MotifLabelHead(nn.Module):
+    """Head for predicting the aggregated Motif Label (Classification)."""
+    def __init__(self, hidden_size, num_motif_labels):
+        super().__init__()
+        # 使用一个线性层将 [CLS] 状态 (config.hidden_size) 映射到标签类别数
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            nn.Linear(hidden_size // 2, num_motif_labels)
+        )
+        self.num_motif_labels = num_motif_labels
+
+    def forward(self, cls_hidden_state):
+        # cls_hidden_state 形状: [B, D]
+        logits = self.classifier(cls_hidden_state) # [B, num_motif_labels]
+        return logits
+
 @register_model('cfp_gen_dplm2')
 class CondDiffusionProteinLanguageModel2(nn.Module):
     _default_cfg = CFPGENConfig_DPLM2()
@@ -737,11 +756,22 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         # self.tokenizer = self.net.tokenizer
         # print("init cdplm2")
 
+        self.use_motif_head = getattr(self.cfg, 'use_motif_head', False)
+        if self.use_motif_head:
+            self.motif_head = MotifLabelHead(
+                1280, self.cfg.cond.go_num
+            )
+            self._init_weights(self.motif_head)
+            
+
+
         self.use_diff_ce = getattr(self.cfg, 'use_diff_ce', False)
         self.use_motif_struct_emb = getattr(self.cfg, 'use_motif_struct_emb', False)
         self.use_static_scale = getattr(self.cfg, 'use_static_scale', False)
 
         self.use_attention_store = getattr(self.cfg, 'use_attention_store', False)
+        # self.use_go_null_token = getattr(self.cfg, 'use_go_null_token', False) # ???
+        self.use_motif_head = getattr(self.cfg, 'use_motif_head', False)
 
         
         if self.cfg.gradient_ckpt:
@@ -755,6 +785,24 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             register_attention_control(self.net.esm.encoder, self.attention_store)
 
         # print("init cdplm2 done")
+
+    
+    def _init_weights(self, module):
+        """Initialize the weights"""
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            if module.weight is not None:
+                module.weight.data.fill_(1.0)
+            if module.bias is not None:
+                module.bias.data.zero_()
+
 
     def _prepare_special_token(self):
         self.aa_bos_id = self.tokenizer._token_to_id["<cls_aa>"]
@@ -1163,6 +1211,64 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             single_modality_index,
         )
 
+    def get_motif_hidden_states_and_labels(self, hidden_states, motif_position_and_label_list):
+        """
+        根据motif位置信息提取对应的hidden states和labels
+        
+        Args:
+            hidden_states: list of [seq_len, hidden_dim], batch中的每个序列的hidden states
+            motif_position_and_label_list: list of dict, 每个dict包含motif的位置和标签信息
+        
+        Returns:
+            motif_hidden_states: [total_motifs, hidden_dim]
+            motif_labels: [total_motifs]
+        """
+        all_motif_states = []
+        all_motif_labels = []
+        
+        for i, (hidden_state, motif_dict) in enumerate(zip(hidden_states, motif_position_and_label_list)):
+            # hidden_state: [seq_len, hidden_dim]
+            for (start, end), label in motif_dict.items():
+
+                if end - start <= 5:
+                    print(f"bad start:{start} end:{end} label:{label}")
+                    continue
+                # 提取motif区域的hidden states
+                motif_region = hidden_state[start:end]  # [motif_len, hidden_dim]
+
+                if torch.isnan(motif_region).any():
+                    print(f"motif_region contains nan: {motif_region}")
+                    print(f"start: {start}, end: {end}, label: {label}")
+                    print(f"hidden_state: {hidden_state}")
+                    print(f"shape hidden_state: {hidden_state.shape}")
+                    raise ValueError("motif_region contains nan")
+                
+                # 对motif区域进行池化（平均池化）
+                motif_embedding = torch.mean(motif_region, dim=0)  # [hidden_dim]
+
+                if torch.isnan(motif_embedding).any():
+                    print(f"motif_embedding contains nan: {motif_embedding}")
+                    print(f"start: {start}, end: {end}, label: {label}")
+                    print(f"motif_region: {motif_region}")
+                    raise ValueError("motif_embedding contains nan")
+                
+                all_motif_states.append(motif_embedding)
+                all_motif_labels.append(label)
+        
+        if len(all_motif_states) == 0:
+            # 如果没有motif，返回空tensor
+            return torch.tensor([], device=hidden_states[0].device), torch.tensor([], device=hidden_states[0].device, dtype=torch.long)
+        
+        motif_hidden_states = torch.stack(all_motif_states)  # [total_motifs, hidden_dim]
+        motif_labels = torch.tensor(all_motif_labels, device=motif_hidden_states.device, dtype=torch.long)
+
+        if torch.isnan(motif_hidden_states).any():
+            print(f"motif_hidden_states contains nan: {motif_hidden_states}")
+            raise ValueError("motif_hidden_states contains nan")
+        
+        return motif_hidden_states, motif_labels
+
+
     
     def compute_loss(self, batch, weighting='constant'):
         target = batch['targets']
@@ -1208,6 +1314,22 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         struct_logits, aatype_logits = model_outputs["logits"].chunk(2, dim=1)
         struct_hidden_state, aatype_hidden_state = model_outputs["last_hidden_state"].chunk(2, dim=1)
 
+
+        motif_labels_logits = None
+        motif_labels_target = None
+        if self.use_motif_head:
+            features, labels = self.get_motif_hidden_states_and_labels(struct_hidden_state, batch.get("motif_position_and_label", None))
+
+            if len(features) == 0:
+                print(f"features: {features}")
+                print(f"labels: {labels}")
+
+                motif_labels_logits = torch.tensor([], device=struct_logits.device)
+                motif_labels_target = torch.tensor([], device=struct_logits.device, dtype=torch.long)
+            else:
+                motif_labels_logits = self.motif_head(features)
+                motif_labels_target = labels
+
         num_timesteps = self.cfg.num_diffusion_timesteps
         struct_weight = {
             "linear": (
@@ -1251,6 +1373,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         if self.use_attention_store:
             # print(f"attention_store: {self.attention_store.attention_maps}")
             attenion_maps = self.attention_store.get_attention_maps()
+            print(f"attn maps: {attenion_maps}")
 
             avg_attn_map = []
             for name, attn_map in attenion_maps.items():
@@ -1258,9 +1381,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             # print(f"avg_attn_map: {avg_attn_map}")
             avg_attn_map = torch.stack(avg_attn_map).mean(0)
             # print(f"avg_attn_map: {avg_attn_map.shape}")
-            # print(f"avg_attn_map: {avg_attn_map}")
+            print(f"avg_attn_map: {avg_attn_map}")
 
-            avg_attn_map = avg_attn_map.reshape(avg_attn_map.shape[0], avg_attn_map.shape[2], avg_attn_map.shape[1])
+            avg_attn_map = avg_attn_map.permute(0, 2, 1)
             # print(f"avg_attn_map: {avg_attn_map.shape}")
 
             self.attention_store.reset()
@@ -1360,6 +1483,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 "struct": struct_hidden_state,
                 "motif": batch.get("motif_position_and_label", None),
                 "struct_weight_point": struct_weight_point,
+                
+                "motif_labels_logits": motif_labels_logits,
+                "motif_labels": motif_labels_target,
             },  # training hidden state
             attn_map_loss_dict,
         )

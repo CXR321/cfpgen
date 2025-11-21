@@ -1,5 +1,5 @@
 export CUDA_VISIBLE_DEVICES=0,2,6,7
-# export CUDA_VISIBLE_DEVICES=0
+# export CUDA_VISIBLE_DEVICES=0,6,7
 # export CUDA_VISIBLE_DEVICES=6,7
 # CUDA_VISIBLE_DEVICES=0,1,3,4
 
@@ -26,7 +26,9 @@ exp=cfpgen/cfpgen_650m_stage1_dplm2
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_dc-0.25-30_sn-pnwandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_dc2-0.25-30_me-sn-pnwandb
 
-model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_clloss-0.1_attnloss-0.1_sn-pnwandb
+# model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_clloss-0.1_attnloss-0.1_sn-pnwandb
+# model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_clloss-1.0-t0.05-cos1024_sn-pnwandb
+model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_weight-headclloss-1.0_sn-pnwandb
 
 # model_name=cfpgen_general_dataset_stage1_dplm2_motifonly_structmaskNone_pfamNone
 # model_name=debug

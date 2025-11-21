@@ -127,6 +127,8 @@ def get_net(cfg):
             config.use_motif_struct_emb = getattr(cfg, "use_motif_struct_emb", False)
             config.use_static_scale = getattr(cfg, "use_static_scale", False)
             config.use_attention_store = getattr(cfg, "use_attention_store", False)
+            config.use_go_null_token = getattr(cfg, "use_go_null_token", False)
+            config.use_motif_head = getattr(cfg, "use_motif_head", False)
 
             # print(f"config: {config}")
             if 'cond' in cfg:

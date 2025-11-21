@@ -11,3 +11,4 @@ num_workers: 8
 pin_memory: true
 
 mini_run: false
+use_go_null_token: false

@@ -6,6 +6,7 @@
 import copy
 import os
 from typing import Any, Callable, List, Union
+from torchviz import make_dot
 
 import numpy as np
 import torch
@@ -36,204 +37,204 @@ def new_arange(x, *size):
     return torch.arange(size[-1], device=x.device).expand(*size).contiguous()
 
 
-@register_task('lm/cfp_gen')
-class CFPGENTrainingTask(TaskLitModule):
-    _DEFAULT_CFG: DictConfig = Cfg(
-        learning=Cfg(
-            noise='rdm',  # ['full_mask', 'random_mask']
-            num_unroll=0,
-            watch_t1_t2_loss=False,
-            cal_constant_loss=False,
-            weight='constant',
-        ),
-    )
-    def __init__(
-        self,
-        model: Union[nn.Module, DictConfig],
-        criterion: Union[nn.Module, DictConfig],
-        optimizer: DictConfig,
-        lr_scheduler: DictConfig = None,
-        *,
-        learning=_DEFAULT_CFG.learning,
-    ):
-        super().__init__(model, criterion, optimizer, lr_scheduler)
+# @register_task('lm/cfp_gen')
+# class CFPGENTrainingTask(TaskLitModule):
+#     _DEFAULT_CFG: DictConfig = Cfg(
+#         learning=Cfg(
+#             noise='rdm',  # ['full_mask', 'random_mask']
+#             num_unroll=0,
+#             watch_t1_t2_loss=False,
+#             cal_constant_loss=False,
+#             weight='constant',
+#         ),
+#     )
+#     def __init__(
+#         self,
+#         model: Union[nn.Module, DictConfig],
+#         criterion: Union[nn.Module, DictConfig],
+#         optimizer: DictConfig,
+#         lr_scheduler: DictConfig = None,
+#         *,
+#         learning=_DEFAULT_CFG.learning,
+#     ):
+#         super().__init__(model, criterion, optimizer, lr_scheduler)
 
-        # this line allows to access init params with 'self.hparams' attribute
-        # it also ensures init params will be stored in ckpt
-        # self.save_hyperparameters(ignore=['model', 'criterion'], logger=False)
-        self.save_hyperparameters(logger=True)
+#         # this line allows to access init params with 'self.hparams' attribute
+#         # it also ensures init params will be stored in ckpt
+#         # self.save_hyperparameters(ignore=['model', 'criterion'], logger=False)
+#         self.save_hyperparameters(logger=True)
     
-        self.build_model() 
-        self.tokenizer = self.model.tokenizer
+#         self.build_model() 
+#         self.tokenizer = self.model.tokenizer
 
 
-    def setup(self, stage=None) -> None:
-        super().setup(stage)
+#     def setup(self, stage=None) -> None:
+#         super().setup(stage)
 
-        self.build_criterion()
-        self.build_torchmetric()
+#         self.build_criterion()
+#         self.build_torchmetric()
 
-        if self.stage == 'fit':
-            log.info(f'\n{self.model}')
-        elif self.stage == 'test':
-            self.test_step_outputs = []
+#         if self.stage == 'fit':
+#             log.info(f'\n{self.model}')
+#         elif self.stage == 'test':
+#             self.test_step_outputs = []
 
-    def on_before_optimizer_step(self, optimizer):
-        if self.global_rank == 0:
-            grad_norm_dict = grad_norm(self.trainer.strategy.model, norm_type=2)
-            self.log_dict(grad_norm_dict)
+#     def on_before_optimizer_step(self, optimizer):
+#         if self.global_rank == 0:
+#             grad_norm_dict = grad_norm(self.trainer.strategy.model, norm_type=2)
+#             self.log_dict(grad_norm_dict)
 
-    def build_model(self):
-        log.info(f"Instantiating neural model <{self.hparams.model._target_}>")
-        self.model = utils.instantiate_from_config(cfg=self.hparams.model, group='model')
+#     def build_model(self):
+#         log.info(f"Instantiating neural model <{self.hparams.model._target_}>")
+#         self.model = utils.instantiate_from_config(cfg=self.hparams.model, group='model')
 
-    def build_criterion(self):
-        # print("start build_criterion")
-        self.criterion = utils.instantiate_from_config(cfg=self.hparams.criterion) 
-        self.criterion.ignore_index = self.tokenizer.pad_token_id
-        # print("end build_criterion")
+#     def build_criterion(self):
+#         # print("start build_criterion")
+#         self.criterion = utils.instantiate_from_config(cfg=self.hparams.criterion) 
+#         self.criterion.ignore_index = self.tokenizer.pad_token_id
+#         # print("end build_criterion")
 
-    def build_torchmetric(self):
-        self.eval_loss = MeanMetric()
-        self.eval_nll_loss = MeanMetric()
+#     def build_torchmetric(self):
+#         self.eval_loss = MeanMetric()
+#         self.eval_nll_loss = MeanMetric()
 
-        self.eval_original_loss = MeanMetric()
+#         self.eval_original_loss = MeanMetric()
 
-        self.val_ppl_best = MinMetric()
+#         self.val_ppl_best = MinMetric()
         
-    def step(self, batch):
-        """
-        batch is a Dict containing:
-            - corrds: FloatTensor [bsz, len, n_atoms, 3], coordinates of proteins
-            - corrd_mask: BooltTensor [bsz, len], where valid coordinates
-                are set True, otherwise False
-            - lengths: int [bsz, len], protein sequence lengths
-            - tokens: LongTensor [bsz, len], sequence of amino acids     
-        """
-        weighting = self.hparams.learning.weight
-        logits, target, loss_mask, weights = self.model.compute_loss(
-            batch, weighting=weighting)
+#     def step(self, batch):
+#         """
+#         batch is a Dict containing:
+#             - corrds: FloatTensor [bsz, len, n_atoms, 3], coordinates of proteins
+#             - corrd_mask: BooltTensor [bsz, len], where valid coordinates
+#                 are set True, otherwise False
+#             - lengths: int [bsz, len], protein sequence lengths
+#             - tokens: LongTensor [bsz, len], sequence of amino acids     
+#         """
+#         weighting = self.hparams.learning.weight
+#         logits, target, loss_mask, weights = self.model.compute_loss(
+#             batch, weighting=weighting)
 
-        loss, logging_output = self.criterion(
-            logits, target,
-            loss_mask,
-            weights,
-            watch_t1_t2_loss=self.hparams.learning.watch_t1_t2_loss,
-            cal_constant_loss=self.hparams.learning.cal_constant_loss,
-        )
+#         loss, logging_output = self.criterion(
+#             logits, target,
+#             loss_mask,
+#             weights,
+#             watch_t1_t2_loss=self.hparams.learning.watch_t1_t2_loss,
+#             cal_constant_loss=self.hparams.learning.cal_constant_loss,
+#         )
         
-        if torch.isnan(loss):
-            print("Loss NAN on step ", self.global_step)
-            loss = loss * 0
-            logging_output['nll_loss'] = logging_output['nll_loss'] * 0
-            logging_output['fullseq_loss'] = logging_output['fullseq_loss'] * 0
-            logging_output['fullseq_nll_loss'] = logging_output['fullseq_nll_loss'] * 0
-            logging_output['ppl'] = logging_output['ppl'] * 0
+#         if torch.isnan(loss):
+#             print("Loss NAN on step ", self.global_step)
+#             loss = loss * 0
+#             logging_output['nll_loss'] = logging_output['nll_loss'] * 0
+#             logging_output['fullseq_loss'] = logging_output['fullseq_loss'] * 0
+#             logging_output['fullseq_nll_loss'] = logging_output['fullseq_nll_loss'] * 0
+#             logging_output['ppl'] = logging_output['ppl'] * 0
 
-        return loss, logging_output
+#         return loss, logging_output
 
-    def training_step(self, batch: Any, batch_idx: int):
-        loss, logging_output = self.step(batch)
+#     def training_step(self, batch: Any, batch_idx: int):
+#         loss, logging_output = self.step(batch)
 
-        # log train metrics
-        self.log('global_step', self.global_step, on_step=True, on_epoch=False, prog_bar=True)
-        self.log('lr', self.lrate, on_step=True, on_epoch=False, prog_bar=True)
+#         # log train metrics
+#         self.log('global_step', self.global_step, on_step=True, on_epoch=False, prog_bar=True)
+#         self.log('lr', self.lrate, on_step=True, on_epoch=False, prog_bar=True)
 
-        for log_key in logging_output:
-            log_value = logging_output[log_key]
-            self.log(f"train/{log_key}", log_value, on_step=True, on_epoch=False, prog_bar=True)
+#         for log_key in logging_output:
+#             log_value = logging_output[log_key]
+#             self.log(f"train/{log_key}", log_value, on_step=True, on_epoch=False, prog_bar=True)
         
-        return {"loss": loss}
+#         return {"loss": loss}
 
-    # -------# Evaluating #-------- #
-    def on_test_epoch_start(self) -> None:
-        self.hparams.noise = 'full_mask'
+#     # -------# Evaluating #-------- #
+#     def on_test_epoch_start(self) -> None:
+#         self.hparams.noise = 'full_mask'
 
-    def validation_step(self, batch: Any, batch_idx: int):
-        loss, logging_output = self.step(batch)
+#     def validation_step(self, batch: Any, batch_idx: int):
+#         loss, logging_output = self.step(batch)
         
-        # log other metrics
-        sample_size = logging_output['sample_size']
-        self.eval_loss.update(loss, weight=sample_size)
-        self.eval_nll_loss.update(logging_output['nll_loss'], weight=sample_size)
-        self.eval_original_loss.update(logging_output['original_loss'], weight=sample_size)
+#         # log other metrics
+#         sample_size = logging_output['sample_size']
+#         self.eval_loss.update(loss, weight=sample_size)
+#         self.eval_nll_loss.update(logging_output['nll_loss'], weight=sample_size)
+#         self.eval_original_loss.update(logging_output['original_loss'], weight=sample_size)
 
-        return {"loss": loss}
+#         return {"loss": loss}
 
-    def on_validation_epoch_end(self):
-        log_key = 'test' if self.stage == 'test' else 'val'
+#     def on_validation_epoch_end(self):
+#         log_key = 'test' if self.stage == 'test' else 'val'
 
-        # compute metrics averaged over the whole dataset
-        eval_loss = self.eval_loss.compute()
-        self.eval_loss.reset()
-        eval_nll_loss = self.eval_nll_loss.compute()
-        self.eval_nll_loss.reset()
-        eval_ppl = torch.exp(eval_nll_loss)
+#         # compute metrics averaged over the whole dataset
+#         eval_loss = self.eval_loss.compute()
+#         self.eval_loss.reset()
+#         eval_nll_loss = self.eval_nll_loss.compute()
+#         self.eval_nll_loss.reset()
+#         eval_ppl = torch.exp(eval_nll_loss)
 
-        eval_original_loss = self.eval_original_loss.compute()
-        self.eval_original_loss.reset()
+#         eval_original_loss = self.eval_original_loss.compute()
+#         self.eval_original_loss.reset()
 
-        self.log(f"{log_key}/loss", eval_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log(f"{log_key}/nll_loss", eval_nll_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log(f"{log_key}/ppl", eval_ppl, on_step=False, on_epoch=True, prog_bar=True)
-        self.log(f"{log_key}/original_loss", eval_original_loss, on_step=False, on_epoch=True, prog_bar=True)
-
-
-        if self.stage == 'fit':
-            self.val_ppl_best.update(eval_ppl)
-            self.log("val/ppl_best", self.val_ppl_best.compute(), on_epoch=True, prog_bar=True)
-
-        super().on_validation_epoch_end()
-
-    def configure_optimizers(self):
-        """Choose what optimizers and learning-rate schedulers to use in your optimization.
-        Normally you'd need one. But in the case of GANs or similar you might have multiple.
-
-        See examples here:
-            https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
-        """
-
-        if 'encoder' in self.hparams.model: # cfp_gen_if
-            optimizer = get_optimizer(self.hparams.optimizer, self.trainer.model.parameters())
-
-        else:  # cfp_gen
-            pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
-            pretrained_state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
+#         self.log(f"{log_key}/loss", eval_loss, on_step=False, on_epoch=True, prog_bar=True)
+#         self.log(f"{log_key}/nll_loss", eval_nll_loss, on_step=False, on_epoch=True, prog_bar=True)
+#         self.log(f"{log_key}/ppl", eval_ppl, on_step=False, on_epoch=True, prog_bar=True)
+#         self.log(f"{log_key}/original_loss", eval_original_loss, on_step=False, on_epoch=True, prog_bar=True)
 
 
-            all_params = list(self.trainer.model.named_parameters())
+#         if self.stage == 'fit':
+#             self.val_ppl_best.update(eval_ppl)
+#             self.log("val/ppl_best", self.val_ppl_best.compute(), on_epoch=True, prog_bar=True)
 
-            pretrained_params = []
-            pretrained_names = []
-            new_names = []
-            new_params = []
+#         super().on_validation_epoch_end()
 
-            for name, param in all_params:
-                # rm "module.model.net." prefix
-                key_core = name.replace('module.model.net.', '')
+#     def configure_optimizers(self):
+#         """Choose what optimizers and learning-rate schedulers to use in your optimization.
+#         Normally you'd need one. But in the case of GANs or similar you might have multiple.
 
-                if (key_core in pretrained_state_dict) and (not 'seq_controlnet' in key_core): # todo debug: stage2
-                    pretrained_names.append(key_core)
-                    pretrained_params.append(param)
-                else:
-                    new_names.append(key_core)
-                    new_params.append(param)
+#         See examples here:
+#             https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
+#         """
 
-            optimizer = get_optimizer(
-                self.hparams.optimizer,
-                [
-                    {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
-                    {"params": new_params, "lr": self.hparams.optimizer.lr}
-                ]
-            )
+#         if 'encoder' in self.hparams.model: # cfp_gen_if
+#             optimizer = get_optimizer(self.hparams.optimizer, self.trainer.model.parameters())
 
-        if "lr_scheduler" in self.hparams and self.hparams.lr_scheduler is not None:
-            lr_scheduler, extra_kwargs = get_scheduler(self.hparams.lr_scheduler, optimizer)
-            return {
-                "optimizer": optimizer,
-                "lr_scheduler": {"scheduler": lr_scheduler, **extra_kwargs},
-            }
-        return optimizer
+#         else:  # cfp_gen
+#             pretrained_model_name_or_path = self.hparams.optimizer.pretrained_model_name_or_path
+#             pretrained_state_dict = torch.load(pretrained_model_name_or_path, map_location='cpu')['state_dict']
+
+
+#             all_params = list(self.trainer.model.named_parameters())
+
+#             pretrained_params = []
+#             pretrained_names = []
+#             new_names = []
+#             new_params = []
+
+#             for name, param in all_params:
+#                 # rm "module.model.net." prefix
+#                 key_core = name.replace('module.model.net.', '')
+
+#                 if (key_core in pretrained_state_dict) and (not 'seq_controlnet' in key_core): # todo debug: stage2
+#                     pretrained_names.append(key_core)
+#                     pretrained_params.append(param)
+#                 else:
+#                     new_names.append(key_core)
+#                     new_params.append(param)
+
+#             optimizer = get_optimizer(
+#                 self.hparams.optimizer,
+#                 [
+#                     {"params": pretrained_params, "lr": self.hparams.optimizer.lr * self.hparams.optimizer.pretrained_lr_ratio}, # self.hparams.optimizer.pretrained_lr_ratio = 0
+#                     {"params": new_params, "lr": self.hparams.optimizer.lr}
+#                 ]
+#             )
+
+#         if "lr_scheduler" in self.hparams and self.hparams.lr_scheduler is not None:
+#             lr_scheduler, extra_kwargs = get_scheduler(self.hparams.lr_scheduler, optimizer)
+#             return {
+#                 "optimizer": optimizer,
+#                 "lr_scheduler": {"scheduler": lr_scheduler, **extra_kwargs},
+#             }
+#         return optimizer
 
 
 @register_task('lm/cfp_gen_dplm2')
@@ -297,6 +298,10 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.eval_loss = MeanMetric()
         self.eval_nll_loss = MeanMetric()
 
+        self.eval_original_loss = MeanMetric()
+        self.eval_attn_loss = MeanMetric()
+        self.eval_contrast_loss = MeanMetric()
+
         self.val_ppl_best = MinMetric()
         
     def step(self, batch):
@@ -326,7 +331,8 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
             attn_map_loss=attn_map_loss,
         )
 
-        print(f"loss: {loss}")
+        print(f"last loss: {loss}")
+        # exit()
 
         # for name, param in self.model.named_parameters():
         #     if param.grad is not None and torch.isnan(param.grad).any():
@@ -369,6 +375,9 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         sample_size = logging_output['sample_size']
         self.eval_loss.update(loss, weight=sample_size)
         self.eval_nll_loss.update(logging_output['nll_loss'], weight=sample_size)
+        self.eval_original_loss.update(logging_output['original_loss'], weight=sample_size)
+        self.eval_attn_loss.update(logging_output.get('attn_loss', 0), weight=sample_size)
+        self.eval_contrast_loss.update(logging_output.get('contrast_loss', 0), weight=sample_size)
 
         return {"loss": loss}
 
@@ -382,9 +391,19 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.eval_nll_loss.reset()
         eval_ppl = torch.exp(eval_nll_loss)
 
+        eval_original_loss = self.eval_original_loss.compute()
+        self.eval_original_loss.reset()
+        eval_attn_loss = self.eval_attn_loss.compute()
+        self.eval_attn_loss.reset()
+        eval_contrast_loss = self.eval_contrast_loss.compute()
+        self.eval_contrast_loss.reset()
+
         self.log(f"{log_key}/loss", eval_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/nll_loss", eval_nll_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/ppl", eval_ppl, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{log_key}/original_loss", eval_original_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{log_key}/attn_loss", eval_attn_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{log_key}/contrast_loss", eval_contrast_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         if self.stage == 'fit':
             self.val_ppl_best.update(eval_ppl)

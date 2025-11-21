@@ -19,6 +19,7 @@ datamodule:
   max_tokens: 8192 # batch size
   max_len: 1022
   mini_run: false
+  use_go_null_token: false
 
 model:
   _target_: cfp_gen_dplm2
@@ -75,7 +76,9 @@ model:
   use_diff_ce: false
   use_motif_struct_emb: false
   use_static_scale: true
-  use_attention_store: true
+  use_attention_store: false
+  use_go_null_token: ${datamodule.use_go_null_token}
+  use_motif_head: true
 
 
 task:
@@ -91,12 +94,12 @@ task:
     label_smoothing: 0.0
     ignore_index: 1
 
-    scale: 0.1
+    scale: 1
     start_step: 10000
-    temperature: 0.5
+    temperature: 0.05
 
-    attn_scale: 0.1
-    attn_start_step: 10000
+    attn_scale: 1
+    attn_start_step: 20000000
 
   optimizer:
     type: adamw
@@ -110,23 +113,23 @@ task:
     weight_decay: 0.01
   lr_scheduler:
     type: polynomial
-    warmup_steps: 2000
+    warmup_steps: 2000 # 2000
     total_steps: ${trainer.max_steps}
     lr: ${train.lr}
-    lr_end: 1e-5
-    warmup_init_lr: 1e-07
+    lr_end: 1e-5  # 1e-5 
+    warmup_init_lr: 1e-7 # 1e-7
     power: 1
 
 train:
   seed: 42
-  lr: 0.00004
+  lr: 0.00004 # 0.00004
   monitor: "val/loss"
   mode: "min"
   patience: 1000
 
 trainer:
   min_epochs: 10
-  max_epochs: 40
+  max_epochs: 4000 # 40
   gradient_clip_val: 0.0
   num_sanity_val_steps: 0
   reload_dataloaders_every_n_epochs: 1

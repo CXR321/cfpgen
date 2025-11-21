@@ -7,6 +7,7 @@ from math import isnan
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torchviz import make_dot
 
 
 def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=None, reduce=True):
@@ -223,36 +224,60 @@ class RDMCrossEntropyLoss(nn.CrossEntropyLoss):
         return loss, logging_output
 
 def get_attn_loss(attn_map_loss):
-    bce_loss_func = nn.BCEWithLogitsLoss(reduction='none')
+    # bce_loss_func = nn.BCELoss()
+    bce_loss_func = nn.MSELoss()
     struct_attn, aa_attn = attn_map_loss['attn_map'].chunk(2, dim=2)
     struct_attn_segment, aa_attn_segment = attn_map_loss['go_type_segments'].chunk(2, dim=2)
     struct_attn_segment_mask, aa_attn_segment_mask = attn_map_loss['go_type_segments_mask'].chunk(2, dim=2)
 
-    struct_attn_loss = bce_loss_func(struct_attn, struct_attn_segment)
-    aa_attn_loss = bce_loss_func(aa_attn, aa_attn_segment)
+    print(f"struct_attn: {struct_attn},\nstruct_attn_segment: {struct_attn_segment},\n")
+
+    with torch.amp.autocast(device_type='cuda', enabled=False):
+        struct_attn_loss = bce_loss_func(struct_attn.float(), struct_attn_segment.float())
+        aa_attn_loss = bce_loss_func(aa_attn.float(), aa_attn_segment.float())
+
+#     dot = make_dot(struct_attn_loss)
+
+# # 保存为文件（如 .png 或 .pdf），然后你可以打开查看
+#     dot.render("loss_graph", view=True)
+#     exit()
+
+    # print(f"segment:{struct_attn_segment},\nattn: {struct_attn}")
 
 
-    print(f"struct_attn_loss: {struct_attn_loss.shape}")
-    print(f"aa_attn_loss: {aa_attn_loss.shape}")
+    # print(f"struct_attn_loss: {struct_attn_loss.shape}")
+    # print(f"aa_attn_loss: {aa_attn_loss.shape}")
 
     struct_attn_sum = (struct_attn_loss * struct_attn_segment_mask).sum(dim=(1, 2))  # Shape: (B)
     struct_mask_sum = struct_attn_segment_mask.sum(dim=(1, 2))                    # Shape: (B)
 
-    print(f"struct_attn_sum: {struct_attn_sum.shape}")
-    print(f"struct_mask_sum: {struct_mask_sum.shape}")
+    # print(f"struct_attn_sum: {struct_attn_sum.shape}")
+    # print(f"struct_mask_sum: {struct_mask_sum.shape}")
 
-    struct_attn_loss_per_sample = struct_attn_sum / (struct_mask_sum + 1e-5)
+    struct_attn_loss_per_sample = struct_attn_sum / (struct_attn_segment_mask.shape[1] + 1e-5)
+
+    print(f"struct_attn_sum: {struct_attn_sum}, struct_mask_sum: {struct_mask_sum}, struct_attn_loss_per_sample: {struct_attn_loss_per_sample}")
 
     # 2. 针对 aa_attn_loss 进行逐样本（Per-Sample）归一化
     aa_attn_sum = (aa_attn_loss * aa_attn_segment_mask).sum(dim=(1, 2))      # Shape: (B)
     aa_mask_sum = aa_attn_segment_mask.sum(dim=(1, 2))                        # Shape: (B)
     # 结果 aa_attn_loss_per_sample 的 shape: (B)
-    aa_attn_loss_per_sample = aa_attn_sum / (aa_mask_sum + 1e-5)
+
+    aa_attn_loss_per_sample = aa_attn_sum / (aa_attn_segment_mask.shape[1] + 1e-5)
+
+
+    print(f"aa_attn_sum: {aa_attn_sum}, aa_mask_sum: {aa_mask_sum}, aa_attn_loss_per_sample: {aa_attn_loss_per_sample}")
 
     # 3. 计算最终的 attn_loss
     # 3.1 逐样本加权: (B) * (B) -> (B)
-    struct_weighted_loss = struct_attn_loss_per_sample * attn_map_loss['struct_weight_point']
-    aa_weighted_loss = aa_attn_loss_per_sample * attn_map_loss['aatype_weight_point']
+    # struct_weighted_loss = struct_attn_loss_per_sample * attn_map_loss['struct_weight_point']
+    # aa_weighted_loss = aa_attn_loss_per_sample * attn_map_loss['aatype_weight_point']
+
+    # 不加权？？
+    struct_weighted_loss = struct_attn_loss_per_sample
+    aa_weighted_loss = aa_attn_loss_per_sample
+
+
 
     # 3.2 在 Batch 维度上求均值（最终的 Loss 标量）
     attn_loss = (struct_weighted_loss + aa_weighted_loss).mean()
@@ -400,7 +425,7 @@ class StructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
 
-    def __init__(self, label_smoothing=0.1, ignore_index=-100, hidden_dim=1280, memory_size=512, temperature=0.5, scale=0.1, start_step=10000, attn_scale=0, attn_start_step=10000):
+    def __init__(self, label_smoothing=0.1, ignore_index=-100, hidden_dim=1280, memory_size=1024, temperature=0.02, scale=0.1, start_step=10000, attn_scale=0, attn_start_step=10000):
         super().__init__(label_smoothing=label_smoothing, ignore_index=ignore_index)
         self.temperature = temperature
         self.memory_size = memory_size
@@ -427,6 +452,24 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
         self.start_time = start_step
         self.attn_start_time = attn_start_step
+
+        self._load_class_weights()
+
+    def _load_class_weights(self):
+        try:
+            import pickle
+            # 1. 从 .pkl 文件加载权重张量
+            with open('/AIRvePFS/dair/chenxr-data/repo/cfpgen/go_number_class_weights.pkl', 'rb') as f:
+                class_weights_tensor = pickle.load(f)
+            
+            # 2. 将张量移动到当前设备 (GPU/CPU)
+            # 必须使用 .to(self.device) 确保设备一致性
+            self.class_weights = class_weights_tensor
+            print(f"✅ 成功加载类别权重。权重形状: {self.class_weights.shape}")
+            
+        except FileNotFoundError:
+            print("⚠️ 警告：未找到 go_number_class_weights.pkl 文件，将使用无加权 Cross Entropy Loss。")
+            self.class_weights = None # 如果文件不存在，则不使用权重
 
     @torch.no_grad()
     def _update_memory_bank(self, features, labels):
@@ -546,178 +589,204 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
         # contrast loss
 
-        if hidden_states is None:
-            raise ValueError("hidden_states should not be None")
+        if hidden_states['motif_labels_logits'] is None:
 
-        features, labels = self.get_motif_hidden_states_and_labels(hidden_states['struct'], hidden_states['motif'])
+            if hidden_states is None:
+                raise ValueError("hidden_states should not be None")
 
-        B = features.shape[0]
-        contrast_loss_mean = None
-        
-        if len(labels) != 0:
-            if self.time < self.start_time:
-                # print("start update memory bank")
-                self._update_latest_label_bank(features, labels)     
-                self._update_memory_bank(features, labels)
-                       
-            else:
-                print("start contrast loss")
+            features, labels = self.get_motif_hidden_states_and_labels(hidden_states['struct'], hidden_states['motif'])
 
-                # --- 新增的权重扩展逻辑开始 ---
-                # struct_weight_point: [B]
-
-                # 1. 统计每个序列的motif数量
-                num_motifs_per_seq = []
-                for motif_dict in hidden_states['motif']:
-                    # motif_dict.items() 返回的是 (start, end) : label
-                    length = 0
-                    for start, end in motif_dict.keys():
-                        if end - start > 5:
-                            length += 1
-                    num_motifs_per_seq.append(length)
-
-                # 2. 将权重根据每个序列的motif数量进行扩展
-                expanded_weights = []
-                device = features.device # 确保权重张量和features在同一设备上
-                for i, weight in enumerate(hidden_states['struct_weight_point']):
-                    # 权重 weight 复制 num_motifs_per_seq[i] 次
-                    num_repeats = num_motifs_per_seq[i]
-                    if num_repeats > 0:
-                        # 使用 repeat 或 full 创建一个 [Mi] 形状的张量
-                        expanded_weights.append(
-                            torch.full((num_repeats,), weight.item(), dtype=weight.dtype, device=device)
-                        )
-
-                # 3. 拼接得到最终的 motif 权重
-                if len(expanded_weights) > 0:
-                    # final_motif_weights 形状为 [total_motifs]
-                    final_motif_weights = torch.cat(expanded_weights)
+            B = features.shape[0]
+            contrast_loss_mean = None
+            
+            if len(labels) != 0:
+                if self.time < self.start_time:
+                    # print("start update memory bank")
+                    self._update_latest_label_bank(features, labels)     
+                    self._update_memory_bank(features, labels)
+                        
                 else:
-                    # 处理 features 为空的情况
-                    final_motif_weights = torch.tensor([], device=device, dtype=hidden_states['struct_weight_point'].dtype)
-                    
-                # 检查 features 的 batch size 是否和权重匹配（重要）
-                if len(features) != len(final_motif_weights):
-                    # 如果 features 不为空，但长度不匹配，则说明逻辑有问题。
-                    # 如果 features 为空，则两者长度都为0，是匹配的。
-                    if len(features) > 0:
-                        raise ValueError(f"Motif features size ({len(features)}) does not match expanded weights size ({len(final_motif_weights)}). Check motif extraction logic.")
+                    print("start contrast loss")
 
-                struct_weight_point = final_motif_weights # 将 [B] 替换为 [total_motifs]
-                # --- 新增的权重扩展逻辑结束 ---
+                    # --- 新增的权重扩展逻辑开始 ---
+                    # struct_weight_point: [B]
 
-                latest_feats = []
-                latest_labs = []
-                if self.latest_label_bank:
-                    for label in labels:
-                        if label in self.latest_label_bank:
-                            latest_feats.append(self.latest_label_bank[label])
-                            latest_labs.append(label)
+                    # 1. 统计每个序列的motif数量
+                    num_motifs_per_seq = []
+                    for motif_dict in hidden_states['motif']:
+                        # motif_dict.items() 返回的是 (start, end) : label
+                        length = 0
+                        for start, end in motif_dict.keys():
+                            if end - start > 5:
+                                length += 1
+                        num_motifs_per_seq.append(length)
+
+                    # 2. 将权重根据每个序列的motif数量进行扩展
+                    expanded_weights = []
+                    device = features.device # 确保权重张量和features在同一设备上
+                    for i, weight in enumerate(hidden_states['struct_weight_point']):
+                        # 权重 weight 复制 num_motifs_per_seq[i] 次
+                        num_repeats = num_motifs_per_seq[i]
+                        if num_repeats > 0:
+                            # 使用 repeat 或 full 创建一个 [Mi] 形状的张量
+                            expanded_weights.append(
+                                torch.full((num_repeats,), weight.item(), dtype=weight.dtype, device=device)
+                            )
+
+                    # 3. 拼接得到最终的 motif 权重
+                    if len(expanded_weights) > 0:
+                        # final_motif_weights 形状为 [total_motifs]
+                        final_motif_weights = torch.cat(expanded_weights)
+                    else:
+                        # 处理 features 为空的情况
+                        final_motif_weights = torch.tensor([], device=device, dtype=hidden_states['struct_weight_point'].dtype)
+                        
+                    # 检查 features 的 batch size 是否和权重匹配（重要）
+                    if len(features) != len(final_motif_weights):
+                        # 如果 features 不为空，但长度不匹配，则说明逻辑有问题。
+                        # 如果 features 为空，则两者长度都为0，是匹配的。
+                        if len(features) > 0:
+                            raise ValueError(f"Motif features size ({len(features)}) does not match expanded weights size ({len(final_motif_weights)}). Check motif extraction logic.")
+
+                    struct_weight_point = final_motif_weights # 将 [B] 替换为 [total_motifs]
+                    # --- 新增的权重扩展逻辑结束 ---
+
+                    latest_feats = []
+                    latest_labs = []
+                    if self.latest_label_bank:
+                        latest_feats.extend(self.latest_label_bank.values())
+                        latest_labs.extend(self.latest_label_bank.keys())
+                        # for label in labels:
+                        #     if label in self.latest_label_bank:
+                        #         latest_feats.append(self.latest_label_bank[label])
+                        #         latest_labs.append(label)
+                        if len(latest_feats) > 0:
+                            latest_feats = torch.stack(latest_feats).to(device)
+                            latest_labs = torch.tensor(latest_labs, dtype=torch.long, device=device)
+
+                    # 拼接 batch + global memory + latest label memory
+                    parts = [features]
+                    parts_labels = [labels]
+
+                    # if len(self.memory_bank) > 0:
+                    #     parts.append(self.memory_bank)
+                    #     parts_labels.append(self.memory_labels)
+                    # if len(latest_feats) > 0:
+                    #     parts.append(latest_feats)
+                    #     parts_labels.append(latest_labs)
+
+                    if len(self.memory_bank) > 0:
+                        parts.append(self.memory_bank.detach().to(device))
+                        parts_labels.append(self.memory_labels.detach().to(device))
                     if len(latest_feats) > 0:
-                        latest_feats = torch.stack(latest_feats).to(device)
-                        latest_labs = torch.tensor(latest_labs, dtype=torch.long, device=device)
+                        parts.append(latest_feats.detach())
+                        parts_labels.append(latest_labs.detach())
 
-                # 拼接 batch + global memory + latest label memory
-                parts = [features]
-                parts_labels = [labels]
+                    all_features = torch.cat(parts, dim=0)  # [B+M+L, D]
+                    all_labels = torch.cat(parts_labels, dim=0)  # [B+M+L]
+                    
+                    # use cosine similarity
+                    # normalize with eps
+                    features = F.normalize(features, dim=-1, eps=1e-4)
+                    all_features = F.normalize(all_features, dim=-1, eps=1e-4)
 
-                # if len(self.memory_bank) > 0:
-                #     parts.append(self.memory_bank)
-                #     parts_labels.append(self.memory_labels)
-                # if len(latest_feats) > 0:
-                #     parts.append(latest_feats)
-                #     parts_labels.append(latest_labs)
+                    sim = torch.matmul(features, all_features.T) / self.temperature
 
-                if len(self.memory_bank) > 0:
-                    parts.append(self.memory_bank.detach().to(device))
-                    parts_labels.append(self.memory_labels.detach().to(device))
-                if len(latest_feats) > 0:
-                    parts.append(latest_feats.detach())
-                    parts_labels.append(latest_labs.detach())
+                    # use euclidean distance
+                    # dist = torch.cdist(features, all_features, p=2)  # [B, B+M+L]
+                    # sim = -dist / self.temperature  # 负距离作为相似度
 
-                all_features = torch.cat(parts, dim=0)  # [B+M+L, D]
-                all_labels = torch.cat(parts_labels, dim=0)  # [B+M+L]
+                    # print(f"sim: {sim}")
+
+                    # exit()
+
+                    # mask
+                    label_eq = labels.unsqueeze(1) == all_labels.unsqueeze(0)
+                    # self_mask = torch.eye(B, B+len(all_features)-B, device=device, dtype=torch.bool)
+
+                    N = all_features.shape[0]
+                    self_mask = torch.zeros((B, N), dtype=torch.bool, device=device)
+                    self_mask[torch.arange(B), torch.arange(B)] = True  # mask (i,i) for the first B entries
+
+                    pos_mask = label_eq & ~self_mask   # positive examples excluding self
+                    any_pos = pos_mask.any(dim=1)      # which rows have positives
+                    den_mask = ~self_mask  # include all except self (positives + negatives)
+
+
+                    NEG_INF = -1e4
+                    sim_den = sim.clone()
+                    sim_den[~den_mask] = NEG_INF  # exclude self
+
+
+                    sim_pos = sim.clone()
+                    sim_pos[~pos_mask] = NEG_INF  # non-positive become -inf so logsumexp ignores them
+
+                    # row-wise logsumexp
+                    den_logsumexp = torch.logsumexp(sim_den, dim=1)  # [B]
+                    num_logsumexp = torch.logsumexp(sim_pos, dim=1)  # [B], if no positives row becomes -inf
+
+                    # compute loss per row: only for those with any positive
+                    loss_per_sample = torch.zeros(B, device=device)
+                    valid = any_pos
+                    # for rows with pos_mask all False, num_logsumexp == -inf, so skip them
+                    loss_per_sample[valid] = -(num_logsumexp[valid] - den_logsumexp[valid])
+
+                    weighted_loss_per_sample = loss_per_sample * struct_weight_point
+
+                    # mean over valid rows (avoid dividing by zero)
+                    if valid.any():
+                        contrast_loss_mean = weighted_loss_per_sample[valid].mean() * self.scale
+                    else:
+                        contrast_loss_mean = torch.tensor(0.0, device=device, dtype=features.dtype)                
+
+                    self._update_memory_bank(features, labels)
+                    self._update_latest_label_bank(features, labels)
+
+                    print(f"contrast_loss_mean: {contrast_loss_mean}")
+                    if torch.isnan(contrast_loss_mean):
+                        torch.set_printoptions(profile="full", sci_mode=False)
+                        print(f"contrast_loss_mean is nan")
+                        print(f"valid: {valid}")
+                        print(f"loss_per_sample: {loss_per_sample}")
+                        print(f"num_logsumexp: {num_logsumexp}")
+                        print(f"den_logsumexp: {den_logsumexp}")
+                        print(f"num_logsumexp[valid]: {num_logsumexp[valid]}")
+                        print(f"den_logsumexp[valid]: {den_logsumexp[valid]}")
+                        print(f"sim_pos: {sim_pos}")
+                        print(f"sim_pos[valid]: {sim_pos[valid]}")
+                        print(f"sim_den: {sim_den}")
+                        print(f"sim_den[valid]: {sim_den[valid]}")
+                        print(f"sim: {sim}")
+                        print(f"sim[valid]: {sim[valid]}")
+                        print(f"sim[valid][valid]: {sim[valid][valid]}")
+                        print(f"sim[valid][valid].shape: {sim[valid][valid].shape}")
+                        print(f"weighted_loss_per_sample: {weighted_loss_per_sample}")
+                        print(f"struct_weight_point: {struct_weight_point}")
+                        print(loss_per_sample[valid])
+
+                        print(f"features: {features}")
+                        print(f"features.shape: {features.shape}")
+                        print(f"all_features: {all_features}")
+                        print(f"all_features.shape: {all_features.shape}")
+                        exit()
+        else:
+            contrast_loss_mean = None
+            
+            
+            if self.time >= self.start_time:
+                print("use motif labels logits")
+                logits = hidden_states['motif_labels_logits']
+                labels = hidden_states['motif_labels']
                 
-                # use cosine similarity
-                # normalize with eps
-                features = F.normalize(features, dim=-1, eps=1e-4)
-                all_features = F.normalize(all_features, dim=-1, eps=1e-4)
+                device = logits.device
 
-                sim = torch.matmul(features, all_features.T) / self.temperature
+                loss_weights = self.class_weights.to(device)
 
-                # use euclidean distance
-                # dist = torch.cdist(features, all_features, p=2)  # [B, B+M+L]
-                # sim = -dist / self.temperature  # 负距离作为相似度
+                if len(labels) != 0:
+                    contrast_loss_mean = F.cross_entropy(logits, labels, weight=loss_weights) * self.scale
+                    # 要平均吗？
+                    print(f"contrast_loss_mean: {contrast_loss_mean}")
 
-                # mask
-                label_eq = labels.unsqueeze(1) == all_labels.unsqueeze(0)
-                # self_mask = torch.eye(B, B+len(all_features)-B, device=device, dtype=torch.bool)
-
-                N = all_features.shape[0]
-                self_mask = torch.zeros((B, N), dtype=torch.bool, device=device)
-                self_mask[torch.arange(B), torch.arange(B)] = True  # mask (i,i) for the first B entries
-
-                pos_mask = label_eq & ~self_mask   # positive examples excluding self
-                any_pos = pos_mask.any(dim=1)      # which rows have positives
-                den_mask = ~self_mask  # include all except self (positives + negatives)
-
-
-                NEG_INF = -1e4
-                sim_den = sim.clone()
-                sim_den[~den_mask] = NEG_INF  # exclude self
-
-
-                sim_pos = sim.clone()
-                sim_pos[~pos_mask] = NEG_INF  # non-positive become -inf so logsumexp ignores them
-
-                # row-wise logsumexp
-                den_logsumexp = torch.logsumexp(sim_den, dim=1)  # [B]
-                num_logsumexp = torch.logsumexp(sim_pos, dim=1)  # [B], if no positives row becomes -inf
-
-                # compute loss per row: only for those with any positive
-                loss_per_sample = torch.zeros(B, device=device)
-                valid = any_pos
-                # for rows with pos_mask all False, num_logsumexp == -inf, so skip them
-                loss_per_sample[valid] = -(num_logsumexp[valid] - den_logsumexp[valid])
-
-                weighted_loss_per_sample = loss_per_sample * struct_weight_point
-
-                # mean over valid rows (avoid dividing by zero)
-                if valid.any():
-                    contrast_loss_mean = weighted_loss_per_sample[valid].mean() * self.scale
-                else:
-                    contrast_loss_mean = torch.tensor(0.0, device=device, dtype=features.dtype)                
-
-                self._update_memory_bank(features, labels)
-                self._update_latest_label_bank(features, labels)
-
-                print(f"contrast_loss_mean: {contrast_loss_mean}")
-                if torch.isnan(contrast_loss_mean):
-                    torch.set_printoptions(profile="full", sci_mode=False)
-                    print(f"contrast_loss_mean is nan")
-                    print(f"valid: {valid}")
-                    print(f"loss_per_sample: {loss_per_sample}")
-                    print(f"num_logsumexp: {num_logsumexp}")
-                    print(f"den_logsumexp: {den_logsumexp}")
-                    print(f"num_logsumexp[valid]: {num_logsumexp[valid]}")
-                    print(f"den_logsumexp[valid]: {den_logsumexp[valid]}")
-                    print(f"sim_pos: {sim_pos}")
-                    print(f"sim_pos[valid]: {sim_pos[valid]}")
-                    print(f"sim_den: {sim_den}")
-                    print(f"sim_den[valid]: {sim_den[valid]}")
-                    print(f"sim: {sim}")
-                    print(f"sim[valid]: {sim[valid]}")
-                    print(f"sim[valid][valid]: {sim[valid][valid]}")
-                    print(f"sim[valid][valid].shape: {sim[valid][valid].shape}")
-                    print(f"weighted_loss_per_sample: {weighted_loss_per_sample}")
-                    print(f"struct_weight_point: {struct_weight_point}")
-                    print(loss_per_sample[valid])
-
-                    print(f"features: {features}")
-                    print(f"features.shape: {features.shape}")
-                    print(f"all_features: {all_features}")
-                    print(f"all_features.shape: {all_features.shape}")
-                    exit()
 
         # dplm2 diffusion crossentropy loss start
         losses = 0
@@ -818,7 +887,8 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
             if attn_loss is not None:
                 logging_output_dict["attn_loss"] = attn_loss.data
-                losses += attn_loss            
+                losses += attn_loss        
+
                 
             return loss, logging_output
         else:
@@ -853,6 +923,12 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 logging_output_dict["contrast_loss"] = contrast_loss_mean.data
                 losses += contrast_loss_mean
             if attn_loss is not None:
+
+                # WANING
+
+                print(f"delete losses just attn loss")
+                losses = 0
+
                 logging_output_dict["attn_loss"] = attn_loss.data
                 losses += attn_loss
             
