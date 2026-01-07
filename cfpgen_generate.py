@@ -257,5 +257,6 @@ def main(config):
 
 if __name__ == '__main__':
     config_path = 'configs/test_cfpgen.yaml'
+    # config_path = 'configs/test_cfpgen_unseen.yaml'
     config = load_config(config_path)
     main(config)

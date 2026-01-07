@@ -74,7 +74,7 @@ model:
   use_diff_modulation: true
   use_func_cross_attn: true
   use_diff_ce: false
-  use_motif_struct_emb: false
+  use_motif_struct_emb: true
   use_static_scale: true
   use_attention_store: false
   use_go_null_token: ${datamodule.use_go_null_token}
@@ -94,7 +94,7 @@ task:
     label_smoothing: 0.0
     ignore_index: 1
 
-    scale: 1
+    scale: 2
     start_step: 10000
     temperature: 0.05
 

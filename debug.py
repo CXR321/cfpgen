@@ -190,18 +190,113 @@ path = "data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfam
 # # print(torch.stack(a, dim=1).shape)
 # print(torch.max(a, b))
 
-import torch
+# import torch
 
-# 假设 L=400 （根据你之前提供的展平后的长度来估计）
-L = 4
-# 模拟你的原始张量：形状为 (1, L, 3)，且每行都是 [1., 0., 0.]
-attn_tensor = torch.tensor([[[1., 0., 0.] for _ in range(L)]])
+# # 假设 L=400 （根据你之前提供的展平后的长度来估计）
+# L = 4
+# # 模拟你的原始张量：形状为 (1, L, 3)，且每行都是 [1., 0., 0.]
+# attn_tensor = torch.tensor([[[1., 0., 0.] for _ in range(L)]])
 
-# 核心操作：调换第 1 维和第 2 维
-new_tensor = attn_tensor.permute(0, 2, 1)
-new_tensor = attn_tensor.reshape(1,3,4)
-# 或者使用 transpose 方法（在 PyTorch 中，transpose只接受两个维度索引）
-# new_tensor = att
-# n_tensor.transpose(1, 2)
-print(attn_tensor)
-print(new_tensor)
+# # 核心操作：调换第 1 维和第 2 维
+# new_tensor = attn_tensor.permute(0, 2, 1)
+# new_tensor = attn_tensor.reshape(1,3,4)
+# # 或者使用 transpose 方法（在 PyTorch 中，transpose只接受两个维度索引）
+# # new_tensor = att
+# # n_tensor.transpose(1, 2)
+# print(attn_tensor)
+# print(new_tensor)
+
+# import pickle
+# from Bio import SeqIO
+# from Bio.Seq import Seq
+# from Bio.SeqRecord import SeqRecord
+
+# def pkl_to_fasta(pkl_path, output_fasta):
+#     print(f"正在将 {pkl_path} 转换为 FASTA...")
+#     with open(pkl_path, 'rb') as f:
+#         data = pickle.load(f)
+    
+#     records = []
+#     for i, item in enumerate(data):
+#         # 兼容不同的数据结构
+#         seq_str = item.get('sequence', '') if isinstance(item, dict) else getattr(item, 'sequence', '')
+#         # 如果有 ID 就用 ID，没有就用索引
+#         uid = item.get('uniprot_id', f'train_{i}') if isinstance(item, dict) else getattr(item, 'uniprot_id', f'train_{i}')
+        
+#         if seq_str:
+#             records.append(SeqRecord(Seq(seq_str), id=str(uid), description=""))
+            
+#     SeqIO.write(records, output_fasta, "fasta")
+#     print(f"转换完成: {output_fasta} (共 {len(records)} 条序列)")
+
+# if __name__ == "__main__":
+#     # 你的训练集路径
+#     TRAIN_PKL = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
+#     pkl_to_fasta(TRAIN_PKL, "train_database.fasta")
+
+
+import pickle
+from tqdm import tqdm
+
+# ================= 配置 =================
+TRAIN_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
+GO_MAPPING_PATH = 'go_mapping.pkl'
+
+# 你的查询条件集合
+QUERY_SET = {'GO:0003954', 'GO:0008137', 'GO:0009055'}
+
+def main():
+    # 1. 加载映射文件
+    print(f"Loading mapping from {GO_MAPPING_PATH}...")
+    with open(GO_MAPPING_PATH, 'rb') as f:
+        go_mapping = pickle.load(f)
+    # 反转映射: Index -> GO ID string
+    index_to_go = {v: k for k, v in go_mapping.items()}
+
+    # 2. 加载训练集
+    print(f"Loading training data from {TRAIN_PATH}...")
+    with open(TRAIN_PATH, 'rb') as f:
+        train_data = pickle.load(f)
+
+    # 3. 搜索交集
+    print(f"Searching for overlaps with {QUERY_SET}...")
+    
+    results = []
+    
+    for entry in tqdm(train_data, desc="Scanning"):
+        # 将当前蛋白的 int 列表转换为 GO ID 集合
+        current_go_set = {index_to_go[i] for i in entry['go_f_mapped']}
+        
+        # 计算交集
+        intersection = current_go_set.intersection(QUERY_SET)
+        
+        # 如果有交集，就记录下来
+        if len(intersection) > 0:
+            results.append({
+                'id': entry['uniprot_id'],
+                'matched': intersection,
+                'full_labels': current_go_set
+            })
+
+    # 4. 输出结果
+    print("\n" + "="*60)
+    print(f"SEARCH RESULTS")
+    print("="*60)
+    print(f"Query Conditions: {QUERY_SET}")
+    print(f"Total Matches Found: {len(results)}")
+    print("-" * 60)
+    print(f"{'UniProt ID':<15} | {'Matched Query Terms'}")
+    print("-" * 60)
+
+    # 为了防止刷屏，如果数量太多，你可以限制打印数量，这里默认打印前 50 个
+    for i, res in enumerate(results):
+        matched_str = ', '.join(sorted(list(res['matched'])))
+        print(f"{res['id']:<15} | {matched_str}")
+        
+        # 如果只想看前50个，取消下面两行的注释
+        # if i >= 50:
+        #     print(f"... and {len(results) - 50} more entries.")
+        #     break
+
+if __name__ == '__main__':
+    main()

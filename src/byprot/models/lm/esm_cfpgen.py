@@ -885,7 +885,8 @@ class AGFMLayerDPLM2(nn.Module):
             if not self.use_static_scale:
                 self.motif_cross_res_scale = nn.Parameter(torch.tensor(0.1))
             else:
-                self.motif_cross_res_scale = torch.tensor(0.5)
+                # self.motif_cross_res_scale = torch.tensor(0.5)
+                self.motif_cross_res_scale = torch.tensor(0.2)
 
 
     def forward(
@@ -1157,222 +1158,222 @@ class FuncTagEmbedder(nn.Module):
         return embeddings
 
 
-# class CFPGenEncoder(EsmEncoder):
-#     def __init__(self, config):
-#         nn.Module.__init__(self)
-#         self.config = config
-#         self.emb_layer_norm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-#         self.gradient_checkpointing = False
+class CFPGenEncoder(EsmEncoder):
+    def __init__(self, config):
+        nn.Module.__init__(self)
+        self.config = config
+        self.emb_layer_norm_after = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.gradient_checkpointing = False
 
-#         self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
+        self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
 
-#         if self.use_go:
-#             self.go_class_num = config.go_num
-#             self.go_cls_dropout_all = config.go_drop
-#             self.go_cls_dropout_each = 0.1
-#             self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
+        if self.use_go:
+            self.go_class_num = config.go_num
+            self.go_cls_dropout_all = config.go_drop
+            self.go_cls_dropout_each = 0.1
+            self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
 
-#         if self.use_ipr:
-#             self.ipr_class_num = config.ipr_num
-#             self.ipr_cls_dropout_all = config.ipr_drop
-#             self.ipr_cls_dropout_each = 0.1
-#             self.ipr_embedder = FuncTagEmbedder(config.ipr_num, config.hidden_size)
+        if self.use_ipr:
+            self.ipr_class_num = config.ipr_num
+            self.ipr_cls_dropout_all = config.ipr_drop
+            self.ipr_cls_dropout_each = 0.1
+            self.ipr_embedder = FuncTagEmbedder(config.ipr_num, config.hidden_size)
 
-#         if self.use_ec:
-#             self.ec_class_num = config.ec_num
-#             self.ec_cls_dropout_all = config.ec_drop
-#             self.ec_cls_dropout_each = 0
-#             self.ec_embedder = FuncTagEmbedder(config.ec_num, config.hidden_size)
-
-
-#         self.layer = nn.ModuleList([AGFMLayer(deepcopy(config)) for _ in range(config.num_hidden_layers)])
-
-#         if config.use_seq_motif:
-#             self.copy_blocks_num = config.num_hidden_layers//2
-#             self.anno_dropout = 0.5
-#             self.seq_controlnet = nn.ModuleList(
-#                 [RCFEBlock(AGFMLayer(deepcopy(config)), i, config.hidden_size) for i in range(self.copy_blocks_num)]
-#             )
-#         else:
-#             self.seq_controlnet = None
+        if self.use_ec:
+            self.ec_class_num = config.ec_num
+            self.ec_cls_dropout_all = config.ec_drop
+            self.ec_cls_dropout_each = 0
+            self.ec_embedder = FuncTagEmbedder(config.ec_num, config.hidden_size)
 
 
-#     def drop_anno_ids(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
-#         """
-#         Drop annotation class IDs either at sample level or element level, then compute embeddings.
-#         """
-#         if training:
-#             # Drop all class IDs in a row with drop_all_prob
-#             drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
-#             full_replacement = torch.full_like(class_tensor, class_num)
-#             class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+        self.layer = nn.ModuleList([AGFMLayer(deepcopy(config)) for _ in range(config.num_hidden_layers)])
 
-#             # Drop individual elements in class_tensor with drop_each_prob
-#             drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
-#             class_tensor = torch.where(drop_each, full_replacement, class_tensor)
-
-#         class_embeds = []
-#         for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
-#             class_ids = class_split.squeeze(-1)
-#             class_embed = embedder(class_ids)
-#             # Zero-out embeddings where class_id == class_num (i.e., dropped)
-#             mask = (class_ids == class_num).unsqueeze(-1)
-#             class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
-#             class_embeds.append(class_embed)
-
-#         # Combine class embeddings by summation
-#         return torch.sum(torch.stack(class_embeds, dim=0), dim=0)
+        if config.use_seq_motif:
+            self.copy_blocks_num = config.num_hidden_layers//2
+            self.anno_dropout = 0.5
+            self.seq_controlnet = nn.ModuleList(
+                [RCFEBlock(AGFMLayer(deepcopy(config)), i, config.hidden_size) for i in range(self.copy_blocks_num)]
+            )
+        else:
+            self.seq_controlnet = None
 
 
-#     def forward(
-#             self,
-#             hidden_states,
-#             attention_mask=None,
-#             head_mask=None,
-#             encoder_hidden_states=None,
-#             encoder_attention_mask=None,
-#             past_key_values=None,
-#             use_cache=None,
-#             output_attentions=False,
-#             output_hidden_states=False,
-#             return_dict=True,
-#             **kwargs
-#     ):
+    def drop_anno_ids(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
+        """
+        Drop annotation class IDs either at sample level or element level, then compute embeddings.
+        """
+        if training:
+            # Drop all class IDs in a row with drop_all_prob
+            drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
+            full_replacement = torch.full_like(class_tensor, class_num)
+            class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+
+            # Drop individual elements in class_tensor with drop_each_prob
+            drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
+            class_tensor = torch.where(drop_each, full_replacement, class_tensor)
+
+        class_embeds = []
+        for i, class_split in enumerate(class_tensor.split(1, dim=-1)):
+            class_ids = class_split.squeeze(-1)
+            class_embed = embedder(class_ids)
+            # Zero-out embeddings where class_id == class_num (i.e., dropped)
+            mask = (class_ids == class_num).unsqueeze(-1)
+            class_embed = torch.where(mask, torch.zeros_like(class_embed), class_embed)
+            class_embeds.append(class_embed)
+
+        # Combine class embeddings by summation
+        return torch.sum(torch.stack(class_embeds, dim=0), dim=0)
 
 
-#         '''
-#         Annotation-Guided Feature Modulation (AGFM)
-#         '''
-
-#         anno_tag = kwargs.get('anno_tag')
-#         anno_embed = None
-
-#         if anno_tag is not None:
-
-#             go_class = anno_tag.get('go')
-#             ipr_class = anno_tag.get('ipr')
-#             ec_class = anno_tag.get('ec')
-
-#             seq_num = hidden_states.size(0)
-
-#             def prepare_class(cls, class_num):
-#                 """Replace -1 with class_num and broadcast if needed."""
-#                 if not self.training and cls.dim() == 1:
-#                     cls = cls.unsqueeze(0).repeat(seq_num, 1)
-#                 return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
-
-#             if self.use_go and go_class is not None:
-#                 go_class = prepare_class(go_class, self.go_embedder.num_classes)
-#                 anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
-#                                                 self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
-
-#             if self.use_ipr and ipr_class is not None:
-#                 ipr_class = prepare_class(ipr_class, self.ipr_embedder.num_classes)
-#                 ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
-#                                                self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
-#                 anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
-
-#             if self.use_ec and ec_class is not None:
-#                 ec_class = prepare_class(ec_class, self.ec_embedder.num_classes)
-#                 ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
-#                                               self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
-#                 anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+    def forward(
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True,
+            **kwargs
+    ):
 
 
-#         if self.gradient_checkpointing and self.training:
-#             if use_cache:
-#                 logger.warning_once(
-#                     "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-#                     "`use_cache=False`..."
-#                 )
-#                 use_cache = False
-#         all_hidden_states = () if output_hidden_states else None
-#         all_self_attentions = () if output_attentions else None
-#         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
+        '''
+        Annotation-Guided Feature Modulation (AGFM)
+        '''
 
-#         next_decoder_cache = () if use_cache else None
+        anno_tag = kwargs.get('anno_tag')
+        anno_embed = None
 
-#         '''
-#         Residue-Controlled Functional Encoding (RCFE)
-#         '''
-#         if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0:
+        if anno_tag is not None:
 
-#             motif = anno_tag['seq_cond']
+            go_class = anno_tag.get('go')
+            ipr_class = anno_tag.get('ipr')
+            ec_class = anno_tag.get('ec')
+
+            seq_num = hidden_states.size(0)
+
+            def prepare_class(cls, class_num):
+                """Replace -1 with class_num and broadcast if needed."""
+                if not self.training and cls.dim() == 1:
+                    cls = cls.unsqueeze(0).repeat(seq_num, 1)
+                return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
+
+            if self.use_go and go_class is not None:
+                go_class = prepare_class(go_class, self.go_embedder.num_classes)
+                anno_embed = self.drop_anno_ids(go_class, self.go_embedder, self.go_class_num,
+                                                self.training, self.go_cls_dropout_all, self.go_cls_dropout_each)
+
+            if self.use_ipr and ipr_class is not None:
+                ipr_class = prepare_class(ipr_class, self.ipr_embedder.num_classes)
+                ipr_embed = self.drop_anno_ids(ipr_class, self.ipr_embedder, self.ipr_class_num,
+                                               self.training, self.ipr_cls_dropout_all, self.ipr_cls_dropout_each)
+                anno_embed = anno_embed + ipr_embed if anno_embed is not None else ipr_embed
+
+            if self.use_ec and ec_class is not None:
+                ec_class = prepare_class(ec_class, self.ec_embedder.num_classes)
+                ec_embed = self.drop_anno_ids(ec_class, self.ec_embedder, self.ec_class_num,
+                                              self.training, self.ec_cls_dropout_all, self.ec_cls_dropout_each)
+                anno_embed = anno_embed + ec_embed if anno_embed is not None else ec_embed
+
+
+        if self.gradient_checkpointing and self.training:
+            if use_cache:
+                logger.warning_once(
+                    "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
+                    "`use_cache=False`..."
+                )
+                use_cache = False
+        all_hidden_states = () if output_hidden_states else None
+        all_self_attentions = () if output_attentions else None
+        all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None
+
+        next_decoder_cache = () if use_cache else None
+
+        '''
+        Residue-Controlled Functional Encoding (RCFE)
+        '''
+        if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0:
+
+            motif = anno_tag['seq_cond']
           
-#             random_go_embed = anno_embed if (not self.training or random.random() > self.anno_dropout) else None  # motif embedding 多大程度参考 global condition
+            random_go_embed = anno_embed if (not self.training or random.random() > self.anno_dropout) else None  # motif embedding 多大程度参考 global condition
 
-#             for index in range(1, self.copy_blocks_num + 1):
-#                 motif, motif_skip = self.seq_controlnet[index - 1](hidden_states, attention_mask, motif, random_go_embed)
-#                 hidden_states = self.layer[index](hidden_states+motif_skip, attention_mask, cond_input=random_go_embed)[0]
+            for index in range(1, self.copy_blocks_num + 1):
+                motif, motif_skip = self.seq_controlnet[index - 1](hidden_states, attention_mask, motif, random_go_embed)
+                hidden_states = self.layer[index](hidden_states+motif_skip, attention_mask, cond_input=random_go_embed)[0]
 
-#             for index in range(self.copy_blocks_num + 1, len(self.layer)):
-#                 hidden_states = self.layer[index](hidden_states, attention_mask, cond_input=random_go_embed)[0]
+            for index in range(self.copy_blocks_num + 1, len(self.layer)):
+                hidden_states = self.layer[index](hidden_states, attention_mask, cond_input=random_go_embed)[0]
 
-#         else:
-#             for i, layer_module in enumerate(self.layer):
-#                 if output_hidden_states:
-#                     all_hidden_states = all_hidden_states + (hidden_states,)
+        else:
+            for i, layer_module in enumerate(self.layer):
+                if output_hidden_states:
+                    all_hidden_states = all_hidden_states + (hidden_states,)
 
-#                 layer_head_mask = head_mask[i] if head_mask is not None else None
-#                 past_key_value = past_key_values[i] if past_key_values is not None else None
+                layer_head_mask = head_mask[i] if head_mask is not None else None
+                past_key_value = past_key_values[i] if past_key_values is not None else None
 
-#                 if self.gradient_checkpointing and self.training:
-#                     layer_outputs = self._gradient_checkpointing_func(
-#                         layer_module.__call__,
-#                         hidden_states,
-#                         attention_mask,
-#                         layer_head_mask,
-#                         encoder_hidden_states,
-#                         encoder_attention_mask,
-#                         past_key_value,
-#                         output_attentions,
-#                     )
-#                 else:
-#                     layer_outputs = layer_module(
-#                         hidden_states,
-#                         attention_mask,
-#                         layer_head_mask,
-#                         encoder_hidden_states,
-#                         encoder_attention_mask,
-#                         past_key_value,
-#                         output_attentions,
-#                         anno_embed,
-#                     )
+                if self.gradient_checkpointing and self.training:
+                    layer_outputs = self._gradient_checkpointing_func(
+                        layer_module.__call__,
+                        hidden_states,
+                        attention_mask,
+                        layer_head_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        past_key_value,
+                        output_attentions,
+                    )
+                else:
+                    layer_outputs = layer_module(
+                        hidden_states,
+                        attention_mask,
+                        layer_head_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        past_key_value,
+                        output_attentions,
+                        anno_embed,
+                    )
 
-#                 hidden_states = layer_outputs[0]
+                hidden_states = layer_outputs[0]
 
-#                 if use_cache:
-#                     next_decoder_cache = next_decoder_cache + (layer_outputs[-1],)
-#                 if output_attentions:
-#                     all_self_attentions = all_self_attentions + (layer_outputs[1],)
-#                     if self.config.add_cross_attention:
-#                         all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
+                if use_cache:
+                    next_decoder_cache = next_decoder_cache + (layer_outputs[-1],)
+                if output_attentions:
+                    all_self_attentions = all_self_attentions + (layer_outputs[1],)
+                    if self.config.add_cross_attention:
+                        all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
 
-#         if self.emb_layer_norm_after:
-#             hidden_states = self.emb_layer_norm_after(hidden_states)
+        if self.emb_layer_norm_after:
+            hidden_states = self.emb_layer_norm_after(hidden_states)
 
-#         if output_hidden_states:
-#             all_hidden_states = all_hidden_states + (hidden_states,)
+        if output_hidden_states:
+            all_hidden_states = all_hidden_states + (hidden_states,)
 
-#         if not return_dict:
-#             return tuple(
-#                 v
-#                 for v in [
-#                     hidden_states,
-#                     next_decoder_cache,
-#                     all_hidden_states,
-#                     all_self_attentions,
-#                     all_cross_attentions,
-#                 ]
-#                 if v is not None
-#             )
-#         return BaseModelOutputWithPastAndCrossAttentions(
-#             last_hidden_state=hidden_states,
-#             past_key_values=next_decoder_cache,
-#             hidden_states=all_hidden_states,
-#             attentions=all_self_attentions,
-#             cross_attentions=all_cross_attentions,
-#         )
+        if not return_dict:
+            return tuple(
+                v
+                for v in [
+                    hidden_states,
+                    next_decoder_cache,
+                    all_hidden_states,
+                    all_self_attentions,
+                    all_cross_attentions,
+                ]
+                if v is not None
+            )
+        return BaseModelOutputWithPastAndCrossAttentions(
+            last_hidden_state=hidden_states,
+            past_key_values=next_decoder_cache,
+            hidden_states=all_hidden_states,
+            attentions=all_self_attentions,
+            cross_attentions=all_cross_attentions,
+        )
 
 class CFPGenEncoderDPLM2(EsmEncoder):
     def __init__(self, config):

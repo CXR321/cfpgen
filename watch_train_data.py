@@ -442,15 +442,48 @@ if __name__ == '__main__':
     # print(train_data[0])
 
 
-    train_data = load_all_pfam_emb_data("train")
-    valid_data = load_all_pfam_emb_data("valid")
+    # train_data = load_all_pfam_emb_data("train")
+    # valid_data = load_all_pfam_emb_data("valid")
     test_data = load_all_pfam_emb_data("test")
 
-    print(f"训练集样本数: {len(train_data)}")
-    print(f"验证集样本数: {len(valid_data)}")
-    print(f"测试集样本数: {len(test_data)}")
+    for data in test_data:
+        if data['uniprot_id'] == 'Q48KZ8':
+            # print(data)
+            print(data['motif'])
+            exit()
+        motifs = data['motif']
 
-    all_data = train_data + valid_data + test_data
+        # for motif in motifs:
+        #     if motif['go_term'] == 'methylenetetrahydrofolate dehydrogenase (NADP+) activity':
+        #         # if motif['end'] - motif['start'] < 50:
+        #         print(f"protein: {data['uniprot_id'], data['motif']}")
+        #         break
+
+        # if 27 in data['go_f_mapped']:
+        #     print(data['motif'])
+        #     continue
+        # if 4 in data['go_f_mapped']:
+        #     print(data['motif'])
+        #     continue
+        # oxidoreductase activity / identical protein binding
+
+        for motif in motifs:
+            if motif['go_term'] == 'identical protein binding' or motif['go_term'] == 'oxidoreductase activity':
+                # if motif['end'] - motif['start'] < 50:
+                print(f"protein: {data['uniprot_id'], data['motif']}")
+                break
+
+
+    exit()
+
+
+
+
+    # print(f"训练集样本数: {len(train_data)}")
+    # print(f"验证集样本数: {len(valid_data)}")
+    # print(f"测试集样本数: {len(test_data)}")
+
+    # all_data = train_data + valid_data + test_data
     # for i in range(len(train_data)):
     #     if train_data[i].get("motif_position_s", None) is not None:
     #         print(train_data[i])
@@ -488,5 +521,5 @@ if __name__ == '__main__':
 
     # build_go_mappings(all_data, save_path="go_id_mapping.pkl")
 
-    analyze_positive_ratio(train_data, batch_size=6, key="motif_go_number")
-    count_labels(train_data, key="motif_go_number", top_k=20)
+    # analyze_positive_ratio(train_data, batch_size=6, key="motif_go_number")
+    # count_labels(train_data, key="motif_go_number", top_k=20)

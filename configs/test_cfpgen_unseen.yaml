@@ -1,4 +1,4 @@
-seed: 42
+seed: 42 # 13 is bad
 
 # run_name: go-ipr-motif
 # run_name: go-ipr
@@ -8,11 +8,11 @@ run_name: go
 ckpt_path: pretrained/cfpgen_650m/checkpoints/last.ckpt
 
 # input_data: data-bin/uniprotKB/cfpgen_general_dataset/test.pkl
-input_data: novelty.pkl
+input_data: test_strict_unseen_repeated_10x.pkl
 
 # saveto: generation-results/
 # saveto: generation-results-cfpgen_650m_bd/
-saveto: generation-results-cfpgen_650m-novelty/
+saveto: generation-results-cfpgen_650m_unseen/
 
 num_seqs: 1
 

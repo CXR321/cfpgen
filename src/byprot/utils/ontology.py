@@ -6,6 +6,9 @@ from xml.etree import ElementTree as ET
 import math
 import networkx as nx
 import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+import itertools
 
 BIOLOGICAL_PROCESS = 'GO:0008150'
 MOLECULAR_FUNCTION = 'GO:0003674'
@@ -73,6 +76,8 @@ class Ontology(object):
         self.ic = None
         self.ic_norm = 0.0
         self.ancestors = {}
+        self.depth = {}
+        self._ensure_graph_loaded()
 
     def has_term(self, term_id):
         return term_id in self.ont
@@ -191,11 +196,17 @@ class Ontology(object):
         """
         if term_id not in self.ont:
             return -1
+
+        if term_id in self.depth:
+            return self.depth[term_id]
         depth = 0
         current_term = term_id
         while self.get_parents(current_term):
             current_term = list(self.get_parents(current_term))[0]
             depth += 1
+        
+        self.depth[term_id] = depth
+
         return depth
 
 
@@ -271,6 +282,82 @@ class Ontology(object):
         nx.draw(G, pos, with_labels=True, labels=labels, node_size=500, font_size=10, arrows=True)
         plt.savefig(filename)
         plt.close()
+
+    def _ensure_graph_loaded(self):
+            """
+            内部辅助函数：惰性初始化 NetworkX 无向图，用于加速距离计算。
+            只在第一次调用 calculate_set_difficulty 时运行。
+            """
+            if hasattr(self, 'G_undirected'):
+                return
+
+            # 创建无向图 (语义距离通常基于无向最短路径)
+            self.G_undirected = nx.Graph()
+            
+            # 遍历 ontology 字典构建图
+            for term_id, val in self.ont.items():
+                self.G_undirected.add_node(term_id)
+                # 添加 'is_a' 关系作为边
+                for parent_id in val.get('is_a', []):
+                    if parent_id in self.ont:
+                        self.G_undirected.add_edge(term_id, parent_id)
+                # 如果需要，也可以添加 'part_of' 等关系，但在 load 函数里这些通常已经被加到 is_a 列表里了(如果 with_rels=True)
+
+    def get_semantic_distance(self, term1, term2):
+        """
+        计算两个 GO term 之间的最短路径距离。
+        """
+        if term1 == term2:
+            return 0.0
+        
+        try:
+            # 计算最短路径长度
+            return nx.shortest_path_length(self.G_undirected, source=term1, target=term2)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            # 如果没有路径（例如跨越了 MF/BP/CC 命名空间）或 ID 不存在，返回惩罚值
+            return 50.0 
+
+    def calculate_set_difficulty(self, go_ids):
+        """
+        计算一个 GO ID 集合的难度。
+        定义为：集合内所有两两组合（Pairwise）的平均语义距离。
+        
+        Args:
+            go_ids (list or set): GO ID 列表
+            
+        Returns:
+            float: 平均距离 (Difficulty Score)
+        """
+        # 1. 过滤掉不在 Ontology 中的 ID
+        valid_terms = [t for t in go_ids if t in self.ont]
+        
+        # 2. 如果少于2个词，无法组成对子，难度为 0
+        if len(valid_terms) < 2:
+            return 0.0
+        
+        dists = []
+        # 3. 计算所有组合的两两距离 (C(n, 2))
+        for t1, t2 in itertools.combinations(valid_terms, 2):
+            d = self.get_semantic_distance(t1, t2)
+            dists.append(d)
+            
+        # 4. 返回平均值
+        return float(np.mean(dists)) if dists else 0.0
+
+    def calculate_go_set_min_difficulty(self, go_id, go_set):
+        min_diff = float('inf')
+
+        for go_id_set in go_set:
+            diff = self.calculate_set_difficulty(set(go_id, go_id_set))
+            min_diff = min(min_diff, diff)
+
+        return min_diff
+
+    def get_namespace(self, term_id):
+        if term_id in self.ont:
+            return self.ont[term_id].get('namespace', 'unknown')
+        return 'unknown'
+
 
 def read_fasta(filename):
     """

@@ -16,7 +16,7 @@ def median_heuristic(emb):
     gamma = 1.0 / (2 * sigma ** 2)  # RBF 核的 gamma
     return gamma
 
-def mmd(seq1=None, seq2=None, emb1=None, emb2=None, mean1=None, mean2=None, embedding='esm', kernel='linear', kernel_args={}, return_pvalue=False, progress=False, **kwargs):
+def mmd(seq1=None, seq2=None, emb1=None, emb2=None, mean1=None, mean2=None, embedding='spectrum', kernel='linear', kernel_args={}, return_pvalue=False, progress=False, **kwargs):
     '''
     Calculates MMD between two sets of sequences. Optionally takes embeddings or mean embeddings of sequences if these have been precomputed for efficiency. If <return_pvalue> is true, a Monte-Carlo estimate (1000 iterations) of the p-value is returned. Note that this is compute-intensive and only implemented for the linear kernel.
     '''

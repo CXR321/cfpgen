@@ -335,6 +335,10 @@ def main(config):
 
 
 if __name__ == '__main__':
-    config_path = 'configs/test_cfpgen_dplm2.yaml'
+    # config_path = 'configs/test_cfpgen_dplm2.yaml'
+    # config_path = 'configs/test_cfpgen_dplm2_novelty.yaml'
+    config_path = 'configs/test_cfpgen_dplm2_unseen.yaml'
+
+    print(f"use config: {config_path}")
     config = load_config(config_path)
     main(config)
