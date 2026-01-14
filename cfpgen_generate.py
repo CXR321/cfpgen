@@ -82,7 +82,7 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
 def get_initial(config, model, sample, length, tokenizer, device, sequence):
 
     go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
-    ipr_labels = sample['ipr_mapped']
+    # ipr_labels = sample['ipr_mapped']
     ec_labels = sample.get('EC_mapped', None)
 
     if config.get('use_seq_motif', False):

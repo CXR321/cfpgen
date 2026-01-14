@@ -840,6 +840,8 @@ class AGFMLayerDPLM2(nn.Module):
         self.use_go_null_token = getattr(config, "use_go_null_token", False)
         self.use_motif_head = getattr(config, "use_motif_head", False)
 
+        self.use_only_struct = getattr(config, "use_only_struct", False)
+
         # print(f"use_func_cross_attn: {self.use_func_cross_attn}")
         # print(f"use static scale: {self.use_static_scale}")
         # exit()

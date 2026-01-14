@@ -82,7 +82,7 @@ def get_motif_gt_pos(target, model, motif_start_end, min_mask_ratio=0.05, max_ma
 def get_initial(config, model, sample, length, tokenizer, device, sequence):
 
     go_labels = sample['go_f_mapped'] if 'go_f_mapped' in sample else sample['go_mapped']
-    ipr_labels = sample['ipr_mapped']
+    # ipr_labels = sample['ipr_mapped']
     ec_labels = sample.get('EC_mapped', None)
 
     if config.get('use_go_null_token', False):
@@ -106,6 +106,9 @@ def get_initial(config, model, sample, length, tokenizer, device, sequence):
         if motif_struct_emb is None:
             raise ValueError("Motif structure embedding is not provided.")
     # seq = ['<mask>'] * length
+
+    if config.get('use_only_struct', False):
+        pass
 
     # seq = [''.join(seq)]
     # init_seq = seq * 1 #config['num_seqs']
@@ -218,6 +221,8 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
 
         # print("model.net")
 
+        # part_data = part_data[:1]
+
         set_seed(config.get('seed', 42) + gpu_idx)
 
         with open(part_fasta_filename, 'a') as fp_save:
@@ -243,24 +248,55 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
                     outputs = model.generate(batch=batch,
                                              max_iter=config['max_iter'],
                                              sampling_strategy=config['sampling_strategy'],
-                                             partial_masks=partial_mask)
+                                             partial_masks=partial_mask, use_struct_only=config['use_only_struct'],)
+
+                # exit()
+
 
                 output_tokens = outputs[0]
                 struct_tokens, aatype_tokens = output_tokens.chunk(2, dim=-1)
 
-                output_results = list(
-                    map(
-                        lambda s: "".join(s.split()),
-                        tokenizer.batch_decode(
-                            aatype_tokens, skip_special_tokens=True
-                        ),
-                    )
-                )
+                # print(struct_tokens)
+                # exit()
 
-                for _, seq in enumerate(output_results):
-                    seq = seq.replace(" ", "")
-                    fp_save.write(f">SEQUENCE_ID={seq_id}_L={seq_len}\n")
-                    fp_save.write(f"{seq}\n")
+                if config.get('use_only_struct', False):
+                    batch_size = struct_tokens.shape[0]
+
+                    for batch_idx in range(batch_size):
+                        # 获取当前批次的结构 token
+                        current_struct_tokens = struct_tokens[batch_idx]
+                        
+                        # 转换为 CPU 和 Python 列表（如果是在 GPU 上）
+                        if current_struct_tokens.is_cuda:
+                            tokens_list = current_struct_tokens.cpu().numpy().tolist()
+                        else:
+                            tokens_list = current_struct_tokens.numpy().tolist()
+                        
+                        tokens_list = tokens_list[1:-1]
+
+                        assert len(tokens_list) == seq_len
+
+                        # 转换为逗号分隔的字符串
+                        tokens_str = ",".join(str(token) for token in tokens_list)
+                        
+                        # 写入文件
+                        fp_save.write(f">SEQUENCE_ID=={seq_id}_L={seq_len}\n")
+                        fp_save.write(f"{tokens_str}\n")                   
+                else:
+
+                    output_results = list(
+                        map(
+                            lambda s: "".join(s.split()),
+                            tokenizer.batch_decode(
+                                aatype_tokens, skip_special_tokens=True
+                            ),
+                        )
+                    )
+
+                    for _, seq in enumerate(output_results):
+                        seq = seq.replace(" ", "")
+                        fp_save.write(f">SEQUENCE_ID={seq_id}_L={seq_len}\n")
+                        fp_save.write(f"{seq}\n")
 
         print(f"Finished processing on GPU {gpu_idx}.")
 
@@ -335,9 +371,9 @@ def main(config):
 
 
 if __name__ == '__main__':
-    # config_path = 'configs/test_cfpgen_dplm2.yaml'
+    config_path = 'configs/test_cfpgen_dplm2.yaml'
     # config_path = 'configs/test_cfpgen_dplm2_novelty.yaml'
-    config_path = 'configs/test_cfpgen_dplm2_unseen.yaml'
+    # config_path = 'configs/test_cfpgen_dplm2_unseen.yaml'
 
     print(f"use config: {config_path}")
     config = load_config(config_path)

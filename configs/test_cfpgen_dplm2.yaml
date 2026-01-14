@@ -66,7 +66,8 @@ ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_headclloss-1.0_sn-pnwandb/checkpoints/step_39999.0-loss_0.90.ckpt
 
 # input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_expanded.pkl
-input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl
+# input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl
+input_data: data-bin/uniprotKB/cfpgen_general_dataset/generated_candidates_motif_emb.pkl
 
 # saveto: generation-results-dplm2-diff-cross-8wstep/
 # saveto: generation-results-dplm2-diff-cross-me-5wstep_fix/
@@ -85,7 +86,9 @@ input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_p
 # saveto: generation-results-dplm2-goonly-alldata-dm-ca-clloss-0.1_attnloss-0.1_sn-pn-5wstep/
 # saveto: generation-results-dplm2-goonly-alldata-dm-ca-clloss-1.0-t0.05-cos1024_sn-pn-4wstep/
 # saveto: generation-results-dplm2-goonly-alldata-dm-ca-me-weight-headclloss-2.0_sn-pn-14wstep/
-saveto: generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/
+# saveto: generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/
+# saveto: generation-results-dplm2-goonly-new-unseen/
+saveto:  generation-debug/
 
 num_seqs: 1
 
@@ -105,6 +108,8 @@ use_func_cross_attn: true
 use_motif_struct_emb: true
 use_static_scale: true
 
+use_only_struct: true
+
 # use_diff_modulation: true
 # use_func_cross_attn: true
 # use_motif_struct_emb: false
@@ -121,7 +126,7 @@ use_motif_mean: false
 
 
 sampling_strategy: annealing@2.0:1.0
-max_iter: 500 # 100 ori
+max_iter: 100 # 100 ori
 
 debug: false
 

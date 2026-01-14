@@ -74,11 +74,14 @@ model:
   use_diff_modulation: true
   use_func_cross_attn: true
   use_diff_ce: false
-  use_motif_struct_emb: true
+  use_motif_struct_emb: false
   use_static_scale: true
   use_attention_store: false
   use_go_null_token: ${datamodule.use_go_null_token}
-  use_motif_head: true
+  use_motif_head: false
+
+
+  use_only_struct: true
 
 
 task:
@@ -89,17 +92,17 @@ task:
     cal_constant_loss: false
     weight: linear
   criterion:
-    # _target_: byprot.modules.cross_entropy.StructAARDMCrossEntropyLoss
-    _target_: byprot.modules.cross_entropy.ContrastMotifStructAARDMCrossEntropyLoss
+    _target_: byprot.modules.cross_entropy.StructAARDMCrossEntropyLoss
+    # _target_: byprot.modules.cross_entropy.ContrastMotifStructAARDMCrossEntropyLoss
     label_smoothing: 0.0
     ignore_index: 1
 
-    scale: 2
-    start_step: 10000
-    temperature: 0.05
+    # scale: 2
+    # start_step: 10000
+    # temperature: 0.05
 
-    attn_scale: 1
-    attn_start_step: 20000000
+    # attn_scale: 1
+    # attn_start_step: 20000000
 
   optimizer:
     type: adamw

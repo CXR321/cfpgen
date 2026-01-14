@@ -96,6 +96,8 @@ class CFPGENConfig_DPLM2:
     use_go_null_token: bool = field(default=False)
     use_motif_head: bool = field(default=False)
 
+    use_only_struct: bool = field(default=False)
+
 
 @register_model('cfp_gen')
 class CondDiffusionProteinLanguageModel(nn.Module):
@@ -773,6 +775,8 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         # self.use_go_null_token = getattr(self.cfg, 'use_go_null_token', False) # ???
         self.use_motif_head = getattr(self.cfg, 'use_motif_head', False)
 
+        self.use_only_struct = getattr(self.cfg, 'use_only_struct', False)
+
         
         if self.cfg.gradient_ckpt:
             self.net.supports_gradient_checkpointing = True
@@ -1121,7 +1125,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         return masked_target
 
-    def construct_x_t(self, struct_target, aatype_target, struct_ignore=None):
+    def construct_x_t(self, struct_target, aatype_target, struct_ignore=None, seq_ignore=False):
         bsz = struct_target.size(0)
         # seperately add noise to struct and aa
         struct_t = torch.randint(
@@ -1197,6 +1201,10 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         )
         aatype_t = aatype_t.masked_fill(folding_index, 0)
         aatype_t = aatype_t.masked_scatter(joint_index, struct_t[joint_index])
+
+        if seq_ignore:
+            aatype_t[:] = self.cfg.num_diffusion_timesteps
+
         aa_type_id = self.get_modality_type(aatype_target)
         aatype_x_t, aa_loss_mask = self.q_sample(
             aatype_target,
@@ -1280,7 +1288,11 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             struct_noised,
             aatype_noised,
             single_modality_index,
-        ) = self.construct_x_t(struct_target, aatype_target, struct_ignore=batch.get('struct_ignore', None))
+        ) = self.construct_x_t(struct_target, aatype_target, struct_ignore=batch.get('struct_ignore', None), seq_ignore=self.use_only_struct)
+
+        # print(aatype_noised)
+        # exit()
+
         x_t = torch.concat([struct_noised["x_t"], aatype_noised["x_t"]], dim=1)
 
         masked_target = None
@@ -1366,6 +1378,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             "constant": num_timesteps * torch.ones_like(aatype_noised["t"]),
         }[weighting][:, None].float() / num_timesteps
         aatype_weight = aatype_weight.expand(aatype_target.size())
+
+        if self.use_only_struct:
+            aatype_weight[:] = 0.0
 
 
         attn_map_loss_dict = None
@@ -1877,6 +1892,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         non_special_sym_mask,
         t,
         max_step,
+        use_struct_only=False,
     ):
         def _reparam_process(
             output_tokens,
@@ -1886,6 +1902,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             xt_neq_x0,
             noise,
             non_special_sym_mask,
+            is_all_mask=False,
         ):
             """This function is used to perform reparameterized decoding.
 
@@ -1908,6 +1925,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 rate = np.cos(t / max_step * np.pi * 0.5)
             else:
                 raise NotImplementedError
+
+            if is_all_mask:
+                rate = 1
 
             # compute the cutoff length for denoising top-k positions
             cutoff_len = (
@@ -2022,6 +2042,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 xt_neq_x0=xt_neq_x0 & aa_position,
                 noise=self.aa_mask_id,
                 non_special_sym_mask=aa_position,
+                is_all_mask=use_struct_only,
             )
         if struct_position.any():
             (
@@ -2047,7 +2068,8 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         temperature=1.0, 
         partial_masks=None,
         unmasking_strategy="stochastic1.0",
-        sampling_strategy='gumbel_argmax'
+        sampling_strategy='gumbel_argmax',
+        use_struct_only=False,
     ):
         # tokenizer = tokenizer
         # max_iter = max_iter
@@ -2118,6 +2140,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 non_special_sym_mask=non_special_sym_mask,
                 t=step + 1,
                 max_step=max_iter,
+                use_struct_only=use_struct_only,
             )
 
             demask_pos = ((last_mask == 1) & (output_masks == 0)).nonzero(as_tuple=True)
@@ -2165,6 +2188,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             prev_decoder_out.update(output_masks=output_masks)
             output_tokens = result_tokens
             output_scores = result_scores
+
+            # print(f"step: {step}")
+            # print(output_tokens)
 
             prev_decoder_out.update(
                 output_tokens=output_tokens,

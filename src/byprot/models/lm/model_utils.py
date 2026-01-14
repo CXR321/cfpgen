@@ -130,6 +130,8 @@ def get_net(cfg):
             config.use_go_null_token = getattr(cfg, "use_go_null_token", False)
             config.use_motif_head = getattr(cfg, "use_motif_head", False)
 
+            config.use_only_struct = getattr(cfg, "use_only_struct", False)
+
             # print(f"config: {config}")
             if 'cond' in cfg:
                 config.update(cfg.cond)

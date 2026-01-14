@@ -452,6 +452,8 @@ if __name__ == '__main__':
         #     # print(data)
         #     print(data['motif'])
         #     exit()
+        # print(data)
+        # exit()
         motifs = data['motif']
         # print(data)
         # exit()
@@ -469,12 +471,18 @@ if __name__ == '__main__':
         #     print(data['motif'])
         #     continue
         # oxidoreductase activity / identical protein binding
-        for motif in motifs:
-            if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
-                # if motif['end'] - motif['start'] < 50:
-                print(f"protein: {data['uniprot_id'], data['motif']}")
-                break
+        # for motif in motifs:
+        #     # if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
+        #     #     # if motif['end'] - motif['start'] < 50:
+        #     #     print(f"protein: {data['uniprot_id'], data['motif']}")
+        #     #     break
+        #     if motif['go_term'] == 'obsolete 2,3-bisphosphoglycerate-dependent phosphoglycerate mutase activity':
+        #         print(f"protein: {data['uniprot_id'], data['motif']}")
+        #         break
 
+        for go_number in data['go_numbers'] ['F']:
+            if go_number == "GO:0008176":
+                print(data)
 
     exit()
 
