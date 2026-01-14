@@ -2,28 +2,32 @@ import os
 import ast
 import requests
 import warnings
+import copy
 from Bio import BiopythonWarning
 from Bio.PDB import MMCIFParser, MMCIFIO, PDBParser, Superimposer
-from Bio.Align import PairwiseAligner
 from Bio.SeqUtils import seq1
 
 # 忽略 PDB 解析的一般警告
 warnings.simplefilter('ignore', BiopythonWarning)
 
 # --- 全局配置 ---
-TARGET_ID = "Q8X844"  # 目标参考蛋白
-TARGET_PDB_PATH = "SEQUENCE_ID=Q8X844_L=281_693_plddt_83.36742401123047_ptm_0.822.pdb"
+TARGET_ID = "Q4X1A4"  # 目标参考蛋白
+TARGET_PDB_PATH = "SEQUENCE_ID=Q4X1A4_L=330_886_plddt_94.8526382446289_ptm_0.955.pdb"
+# TARGET_PDB_PATH = "./pdbs/Q6IE46.cif"
+# TARGET_PDB_PATH = "./pdbs/A4VUK5.cif"
 INPUT_FILE = "watch_train_data.out" 
 OUTPUT_DIR = "alignment_output_motif" # 输出目录
 PDB_DIR = "pdbs"
 
 # 筛选条件
-MAX_MOTIF_LENGTH = 300
+MAX_MOTIF_LENGTH = 150
 ALLOWED_GO_TERMS = {
     # 'oxidoreductase activity', 
     # 'identical protein binding',
-    'hydrolase activity',
-    'carbohydrate derivative binding',
+    # 'hydrolase activity',
+    # 'carbohydrate derivative binding',
+    # 'mannitol-1-phosphate 5-dehydrogenase activity',
+    'NAD binding',
 }
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -58,10 +62,8 @@ def parse_watch_file(filepath):
             try:
                 pdb_id, motif_list = ast.literal_eval(content_str)
                 for i, m in enumerate(motif_list):
-                    # 筛选 GO Term
                     if m.get('go_term') not in ALLOWED_GO_TERMS: continue
                     
-                    # 筛选 长度 < 100
                     start, end = m['start'], m['end']
                     if (end - start + 1) >= MAX_MOTIF_LENGTH:
                         continue
@@ -87,16 +89,27 @@ def get_first_chain(structure):
             return chain
     return None
 
-def get_structure_sequence(structure):
-    """提取第一条链的序列"""
+def get_all_ca_atoms(structure):
+    """
+    获取整条链所有的 CA 原子，返回列表。
+    用于在 Target 上进行滑窗遍历。
+    """
+    atoms = []
     chain = get_first_chain(structure)
-    if not chain: return ""
-    # 过滤掉非标准残基，避免 SeqUtils 报错
-    seq = "".join([seq1(r.get_resname()) for r in chain if r.id[0] == ' '])
-    return seq
+    if not chain: return []
+    
+    # 获取所有残基，过滤掉水分子等 hetero 原子
+    for residue in chain:
+        if residue.id[0] == ' ': # 标准氨基酸
+            if 'CA' in residue:
+                atoms.append(residue['CA'])
+    return atoms
 
 def get_atoms_by_residue_range(structure, start_res, end_res):
-    """提取指定残基范围内的 CA 原子 (1-based index)"""
+    """
+    提取指定残基范围内的 CA 原子 (1-based index, PDB numbering)。
+    用于提取 Motif 的原子。
+    """
     atoms = []
     chain = get_first_chain(structure)
     if not chain: return []
@@ -108,27 +121,47 @@ def get_atoms_by_residue_range(structure, start_res, end_res):
                 atoms.append(residue['CA'])
     return atoms
 
-def map_motif_to_target(target_seq, motif_seq):
+def scan_best_rmsd_window(target_ca_list, motif_ca_list):
     """
-    使用局部比对找到 Motif 在 Target 上的坐标范围。
-    注意：这只是为了找到 'Anchor'（锚点），对齐本身是基于结构的。
+    核心逻辑：在 Target 的 CA 列表中滑动窗口，
+    寻找与 Motif CA 列表 RMSD 最小的片段。
+    
+    Args:
+        target_ca_list: Target 的所有 CA 原子列表
+        motif_ca_list: Motif 的 CA 原子列表
+        
+    Returns:
+        best_fixed_atoms: 对应的 Target 原子片段 (用于最后做 apply)
+        min_rmsd: 最小的 RMSD 值
     """
-    aligner = PairwiseAligner()
-    aligner.mode = 'local'
-    aligner.open_gap_score = -10 # 严厉的 gap 惩罚，保证 motif 尽量完整匹配
-    aligner.extend_gap_score = -1
+    motif_len = len(motif_ca_list)
+    target_len = len(target_ca_list)
     
-    alignments = aligner.align(target_seq, motif_seq)
-    if not alignments: return None, None
+    if motif_len == 0 or target_len < motif_len:
+        return None, float('inf')
+
+    min_rmsd = float('inf')
+    best_fixed_atoms = None
     
-    best_aln = alignments[0]
-    target_indices = best_aln.aligned[0] # Target 上的匹配片段 [(start, end)]
+    si = Superimposer()
     
-    # 转换为 1-based 坐标
-    start_res = target_indices[0][0] + 1
-    end_res = target_indices[-1][1]
-    
-    return start_res, end_res
+    # 开始滑窗
+    # i 是窗口在 target_ca_list 中的起始索引
+    for i in range(target_len - motif_len + 1):
+        # 取出当前的窗口片段
+        window_fixed = target_ca_list[i : i + motif_len]
+        
+        try:
+            # 计算 RMSD (注意：set_atoms 不会修改原子坐标，只计算矩阵和 rms)
+            si.set_atoms(window_fixed, motif_ca_list)
+            
+            if si.rms < min_rmsd:
+                min_rmsd = si.rms
+                best_fixed_atoms = window_fixed
+        except Exception:
+            continue
+            
+    return best_fixed_atoms, min_rmsd
 
 # --- 4. 主逻辑 ---
 
@@ -139,70 +172,81 @@ def main():
     if not tasks: return
 
     print(f"\n--- Step 2: Loading Target {TARGET_ID} ---")
-    # target_path = download_alphafill_cif(TARGET_ID)
     target_path = TARGET_PDB_PATH
     if not target_path: return
 
-    cif_parser = MMCIFParser(QUIET=True)
-    # target_struct = cif_parser.get_structure(TARGET_ID, target_path)
+    # 加载 Target 结构
     parser_pdb = PDBParser(QUIET=True)
     target_struct = parser_pdb.get_structure(TARGET_ID, target_path)
-    target_seq = get_structure_sequence(target_struct)
+
+    # parser_pdb = MMCIFParser(QUIET=True)
+    # target_struct = parser_pdb.get_structure(TARGET_ID, target_path)
     
+    # 提取 Target 的所有 CA 原子用于滑窗
+    target_all_ca = get_all_ca_atoms(target_struct)
+    print(f"Target Loaded. Total CA atoms: {len(target_all_ca)}")
+
     # PyMOL 初始化
     pymol_script = [
         "reinitialize", 
         "bg_color white",
         f"load {os.path.abspath(target_path)}, target",
-        "color gray90, target", # Target 设为很浅的灰色
-        "set transparency, 0.6, target" # 设置透明度，突出 Motif
+        "color gray90, target", 
+        "set transparency, 0.6, target"
     ]
 
-    print(f"\n--- Step 3: Aligning Motifs ---")
+    print(f"\n--- Step 3: Aligning Motifs by Structural Scanning ---")
     
+    cif_parser = MMCIFParser(QUIET=True)
+
     for task in tasks:
         uid = task['id']
-        motif_seq = task['motif_seq']
         in_start, in_end = task['start'], task['end']
         label = task['go_term']
         
-        # 下载
+        # 下载/加载 Motif 所在蛋白结构
         input_path = download_alphafill_cif(uid)
         if not input_path: continue
 
-        # 每次加载独立的结构对象，因为 Superimposer 会修改坐标
         try:
+            # 每次加载新对象以防坐标污染
             moving_struct = cif_parser.get_structure(f"{uid}_tmp", input_path)
         except Exception:
             continue
 
-        # A. 定位：找到 Target 上的对应区域
-        t_start, t_end = map_motif_to_target(target_seq, motif_seq)
-        if t_start is None:
+        # A. 获取 Motif 的原子 (Moving Atoms)
+        moving_atoms = get_atoms_by_residue_range(moving_struct, in_start, in_end)
+        
+        if len(moving_atoms) < 3:
+            print(f"Skipping {uid}: Motif atoms too few ({len(moving_atoms)}).")
             continue
 
-        # B. 获取原子：仅获取 Motif 区域的原子
-        # Target 的原子 (Fixed)
-        fixed_atoms = get_atoms_by_residue_range(target_struct, t_start, t_end)
-        # Input 的原子 (Moving) - 直接使用文件里给的 start/end
-        moving_atoms = get_atoms_by_residue_range(moving_struct, in_start, in_end)
+        # B. 核心：通过滑窗寻找最佳匹配位置 (Scanning)
+        # 不需要序列比对，直接用几何形状去套
+        best_fixed_atoms, min_rmsd = scan_best_rmsd_window(target_all_ca, moving_atoms)
 
-        # 原子数量检查与截断
-        min_len = min(len(fixed_atoms), len(moving_atoms))
-        if min_len < 3:
-            print(f"Skipping {uid}: Not enough matching atoms.")
+        if best_fixed_atoms is None:
+            print(f"Skipping {uid}: Window scan failed.")
             continue
         
-        fixed_atoms = fixed_atoms[:min_len]
-        moving_atoms = moving_atoms[:min_len]
+        # 设定一个 RMSD 阈值，如果最小 RMSD 都很大，可能说明这个 Motif 在 Target 上根本没有对应的结构
+        # 这里的 5.0 只是一个示例，你可以根据需要调整
+        if min_rmsd > 5.0:
+            print(f"Skipping {uid}: RMSD too high ({min_rmsd:.3f}) - No structural match found.")
+            continue
 
-        # C. 结构对齐 (SVD) - 仅计算 Motif 原子的最佳旋转矩阵
+        # C. 执行最终对齐
+        # 再次初始化 Superimposer，用最佳窗口的原子进行 Apply
         super_imposer = Superimposer()
         try:
-            super_imposer.set_atoms(fixed_atoms, moving_atoms)
-            # 应用旋转到整个结构 (虽然我们只关心 Motif，但保存全结构便于观察上下文)
-            super_imposer.apply(moving_struct.get_atoms())
-            print(f"Aligned {uid} Motif | RMSD: {super_imposer.rms:.3f} | Len: {min_len} | Label: {label}")
+            super_imposer.set_atoms(best_fixed_atoms, moving_atoms)
+            super_imposer.apply(moving_struct.get_atoms()) # 将旋转应用到整个 moving 结构
+            
+            # 记录匹配到的 Target 位置信息 (用于日志)
+            match_start_res = best_fixed_atoms[0].get_parent().id[1]
+            match_end_res = best_fixed_atoms[-1].get_parent().id[1]
+            
+            print(f"Aligned {uid} | RMSD: {min_rmsd:.3f} | Match Target Res: {match_start_res}-{match_end_res} | Label: {label}")
         except Exception as e:
             print(f"Alignment error {uid}: {e}")
             continue
@@ -218,32 +262,24 @@ def main():
         except:
             continue
 
-        # E. PyMOL 命令
+        # E. PyMOL 命令 (逻辑保持不变)
         obj_name = f"{uid}_m{task['motif_idx']}"
         pymol_script.append(f"load {os.path.abspath(out_path)}, {obj_name}")
         
-        # 这里的颜色策略：只显示 Motif 的 Sticks，隐藏其他部分或者把其他部分变淡
         if 'oxidoreductase' in label:
             stick_color = "cyan"
         else:
             stick_color = "magenta"
             
-        # 先把整个蛋白隐藏或设为极淡
         pymol_script.append(f"color gray80, {obj_name}")
-        pymol_script.append(f"hide cartoon, {obj_name}") # 默认隐藏 Cartoon
+        pymol_script.append(f"hide cartoon, {obj_name}") 
         
-        # 选中 Motif 区域
         sel_name = f"sel_{obj_name}"
         pymol_script.append(f"select {sel_name}, {obj_name} and resi {in_start}-{in_end}")
         
-        # 以漂亮的 Sticks 展示 Motif
         pymol_script.append(f"show sticks, {sel_name}")
         pymol_script.append(f"color {stick_color}, {sel_name}")
-        pymol_script.append(f"util.cnc {sel_name}") # 让碳原子上色，氮氧保持蓝红
-        
-        # 可选：显示 Ribbon 只要 Motif 部分
-        pymol_script.append(f"show cartoon, {sel_name}")
-
+        pymol_script.append(f"util.cnc {sel_name}") 
         pymol_script.append(f"group {label.replace(' ', '_')}, {obj_name}")
 
     # 保存脚本

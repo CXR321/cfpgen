@@ -12,8 +12,8 @@ from src.byprot.utils.ontology import Ontology
 
 # ================= Configuration =================
 # 1. Paths
-TSV_PATH = './generation-results-cfpgen_650m_unseen/cfpgen_650m_go_nondup_preds_mf.tsv'
-# TSV_PATH = './generation-results-dplm2-goonly-unseen-all/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_nondup_preds_mf.tsv'
+# TSV_PATH = './generation-results-cfpgen_650m_unseen/cfpgen_650m_go_nondup_preds_mf.tsv'
+TSV_PATH = './generation-results-dplm2-goonly-unseen-all/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_nondup_preds_mf.tsv'
 
 TRAIN_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 TEST_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
@@ -95,14 +95,15 @@ for entry in test_data:
     if not all(go_id in valid_train_gos for go_id in gt_go_ids):
         continue
 
-    # --- Filter: Keep only 1 unique GT combination ---
-    # 将列表转换为 frozenset 以便作为 hash key
-    gt_key = frozenset(gt_go_ids)
+    # # --- Filter: Keep only 1 unique GT combination ---
+    # # 将列表转换为 frozenset 以便作为 hash key
+    # gt_key = frozenset(gt_go_ids)
     
-    # 如果这个组合之前没出现过，才添加
-    if gt_key not in seen_gt_combos:
-        strict_unseen_targets[pid] = set(gt_go_ids)
-        seen_gt_combos.add(gt_key)  # 标记为已收录
+    # # 如果这个组合之前没出现过，才添加
+    # if gt_key not in seen_gt_combos:
+    #     strict_unseen_targets[pid] = set(gt_go_ids)
+    #     seen_gt_combos.add(gt_key)  # 标记为已收录
+    strict_unseen_targets[pid] = set(gt_go_ids)
 
 print(f"Found {len(strict_unseen_targets)} Strictly Unseen Targets (Unique GT combinations).")
 
@@ -210,7 +211,7 @@ gt_combo_stats = defaultdict(lambda: {'total': 0, 'exact': 0})
 
 evaluated_count = 0
 
-for raw_id, group in tqdm(instance_groups, desc="Propagating"):
+for raw_id, group in tqdm(instance_groups, desc="Evaluating"):
     pid = group['uniprot_id'].iloc[0]
 
     if pid not in strict_unseen_targets:
@@ -221,22 +222,57 @@ for raw_id, group in tqdm(instance_groups, desc="Propagating"):
     pred_raw = set(group['go_id'])
 
     # ----- Intersection Space Filtering -----
-    gt_filt = {go for go in gt_raw if go in unique_go}
-    pred_filt = {go for go in pred_raw if go in unique_go}
+    # 这一步非常重要，保证评测空间一致
+    gt_filt = gt_raw
+    pred_filt = pred_raw
 
-    # Skip degenerate cases
+    # Skip degenerate cases (GT 为空的不统计)
     if len(gt_filt) == 0:
         continue
+    
+    evaluated_count += 1
+
+    # ----- 核心修改：生成可哈希的 Key 用于统计 -----
+    # 将集合转为排序后的元组，作为字典的 Key
+    gt_key = tuple(sorted(list(gt_filt)))
+    
+    # 1. 分母 +1
+    gt_combo_stats[gt_key]['total'] += 1
 
     # ----- Exact Match Logic: GT ⊆ Pred -----
+    # 注意：你原本的代码逻辑是 issubset (即 Recall=100%)，我保持不变
     if gt_filt.issubset(pred_filt):
-        exact_matches.append({
-            'raw_id': raw_id,
-            'uniprot_id': pid,
-            'gt': gt_filt,
-            'pred': pred_filt
-        })
+        # 2. 分子 +1
+        gt_combo_stats[gt_key]['exact'] += 1
+        if gt_key == tuple(sorted(list(["GO:0016787", "GO:0097367"]))) or gt_key == tuple(sorted(list(["GO:0008926", "GO:0051287"]))):
+            print(raw_id)
 
-print(f"Found {len(exact_matches)} Exact Match Instances out of {len(y_true)} evaluated.")
+# ================= 转换为 DataFrame 并输出 =================
+print(f"Evaluated {evaluated_count} valid instances.")
 
+stats_list = []
+for gt_tuple, counts in gt_combo_stats.items():
+    total = counts['total']
+    exact = counts['exact']
+    accuracy = exact / total if total > 0 else 0.0
+    
+    stats_list.append({
+        'gt_combination': ",".join(gt_tuple), #以此作为ID，方便阅读
+        'num_labels': len(gt_tuple),          # GT 包含多少个标签
+        'total_samples': total,               # 该组合总共有多少个样本
+        'exact_matches': exact,               # 其中有多少个是 Exact Match
+        'accuracy': accuracy                  # 准确率
+    })
+
+df_stats = pd.DataFrame(stats_list)
+
+# 按样本数量降序排列（优先关注出现频率高的组合）
+df_stats = df_stats.sort_values(by='gt_combination', ascending=False)
+
+# 保存 CSV
+output_csv = 'exact_match_stats_by_unique_gt_ours.csv'
+df_stats.to_csv(output_csv, index=False)
+
+print(f"\nStats saved to {output_csv}")
+print(df_stats.head(10)) # 打印前10行看看
 

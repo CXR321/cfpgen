@@ -204,6 +204,8 @@ class Ontology(object):
         while self.get_parents(current_term):
             current_term = list(self.get_parents(current_term))[0]
             depth += 1
+
+        depth = self.get_semantic_distance(term_id, "GO:0003674")
         
         self.depth[term_id] = depth
 

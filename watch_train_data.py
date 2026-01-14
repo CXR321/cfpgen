@@ -442,16 +442,19 @@ if __name__ == '__main__':
     # print(train_data[0])
 
 
-    # train_data = load_all_pfam_emb_data("train")
+    train_data = load_all_pfam_emb_data("train")
     # valid_data = load_all_pfam_emb_data("valid")
-    test_data = load_all_pfam_emb_data("test")
-
-    for data in test_data:
-        if data['uniprot_id'] == 'Q48KZ8':
-            # print(data)
-            print(data['motif'])
-            exit()
+    # test_data = load_all_pfam_emb_data("test")
+    
+    for data in train_data:
+    # for data in test_data:
+        # if data['uniprot_id'] == 'Q48KZ8':
+        #     # print(data)
+        #     print(data['motif'])
+        #     exit()
         motifs = data['motif']
+        # print(data)
+        # exit()
 
         # for motif in motifs:
         #     if motif['go_term'] == 'methylenetetrahydrofolate dehydrogenase (NADP+) activity':
@@ -466,9 +469,8 @@ if __name__ == '__main__':
         #     print(data['motif'])
         #     continue
         # oxidoreductase activity / identical protein binding
-
         for motif in motifs:
-            if motif['go_term'] == 'identical protein binding' or motif['go_term'] == 'oxidoreductase activity':
+            if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
                 # if motif['end'] - motif['start'] < 50:
                 print(f"protein: {data['uniprot_id'], data['motif']}")
                 break

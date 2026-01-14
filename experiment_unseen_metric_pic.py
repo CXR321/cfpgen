@@ -6,14 +6,16 @@ import seaborn as sns
 # Metrics from your log
 metrics = ['Micro F1', 'Macro F1', 'Micro Recall', 'Micro Precision']
 
-# Baseline: cfpgen_650m
-baseline_scores = [0.4686, 0.3401, 0.5557, 0.4050]
-baseline_exact = 199
-total_samples = 1400
+# Baseline: cfpgen_650m (Updated Data)
+# Micro F1: 0.4762, Macro F1: 0.3392, Micro Recall: 0.4993, Micro Precision: 0.4551
+baseline_scores = [0.4762, 0.3392, 0.4993, 0.4551]
+baseline_exact = 76
+total_samples = 760  # Updated from 1400 to 760 based on log
 
-# Ours: DPLM2
-ours_scores = [0.5057, 0.4243, 0.6062, 0.4338]
-ours_exact = 233
+# Ours: DPLM2 (Updated Data)
+# Micro F1: 0.5366, Macro F1: 0.4304, Micro Recall: 0.5866, Micro Precision: 0.4945
+ours_scores = [0.5366, 0.4304, 0.5866, 0.4945]
+ours_exact = 110
 
 # Calculate Exact Match Percentages
 baseline_em_pct = (baseline_exact / total_samples) * 100
@@ -40,7 +42,8 @@ axes[0].set_ylabel('Score')
 axes[0].set_title('Performance Metrics on OOD Test Set', fontsize=14, weight='bold', pad=15)
 axes[0].set_xticks(x)
 axes[0].set_xticklabels(metrics)
-axes[0].set_ylim(0.2, 0.7)  # Set limit to make room for labels
+# Adjusted ylim slightly to accommodate the new highest value (approx 0.58) nicely
+axes[0].set_ylim(0.2, 0.7) 
 axes[0].legend(loc='upper left', frameon=True, framealpha=0.9)
 
 # Helper function to add labels on bars
@@ -68,12 +71,12 @@ axes[1].set_ylabel('Exact Match Rate (%)')
 axes[1].set_title('Exact Match Consistency', fontsize=14, weight='bold', pad=15)
 axes[1].set_xticks(x_em)
 axes[1].set_xticklabels(em_labels)
-axes[1].set_ylim(0, 20)  # Adjust based on data (highest is ~16%)
+# Adjusted ylim because 110/760 is approx 14.5%, so 20 is still a good limit
+axes[1].set_ylim(0, 20) 
 
 # Add labels for Exact Matches
 for i, rect in enumerate(rects_em):
     height = rect.get_height()
-    raw_count = baseline_exact if i == 0 else ours_exact
     # Display Percentage and Raw Count
     label_text = f"{height:.2f}%"
     axes[1].annotate(label_text,
@@ -89,7 +92,7 @@ fig.suptitle("Performance Comparison: OOD Conditional Generation", fontsize=18, 
 plt.tight_layout()
 
 # Save the figure
-filename = "experiment_ood_conditional_generation_metrics.png"
+filename = "experiment_ood_conditional_generation_metrics_updated.png"
 plt.savefig(filename, dpi=300, bbox_inches='tight')
 print(f"Plot saved as {filename}")
 

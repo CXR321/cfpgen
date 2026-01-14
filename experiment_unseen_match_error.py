@@ -1,5 +1,6 @@
 import os
 import pickle
+import random
 import pandas as pd
 import numpy as np
 import networkx as nx
@@ -128,6 +129,28 @@ def main():
             })
             
     print(f"Found {len(unseen_entries)} strict unseen targets.")
+
+    # 1. 先收集所有符合条件的候选数据 (这一步逻辑不变，只是存入 candidates)
+    candidates = unseen_entries
+    # 2. 按 GT 分组并进行随机下采样
+    gt_groups = defaultdict(list)
+    for item in candidates:
+        # set 是不可哈希的，必须转为 frozenset 才能作为字典的 Key
+        gt_key = frozenset(item['gt'])
+        gt_groups[gt_key].append(item)
+
+    unseen_entries = []
+    max_per_gt = 10  # 设定的阈值
+
+    for gt_key, items in gt_groups.items():
+        if len(items) > max_per_gt:
+            # 如果超过10条，随机抽取10条
+            unseen_entries.extend(random.sample(items, max_per_gt))
+        else:
+            # 不足或刚好10条，全部保留
+            unseen_entries.extend(items)
+
+    print(f"Filtered down to {len(unseen_entries)} targets after capping same GT at {max_per_gt}.")
 
     # ================= 4. 逐个分析样本 =================
     analysis_results = []
