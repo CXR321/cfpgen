@@ -4,6 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import os
+import csv  # 新增：用于读取 CSV
 
 # ================= 路径配置 =================
 # 输入文件
@@ -19,6 +20,7 @@ STATIC_MAPPING_PATH = './desc2map_dict_statics.pkl' # 包含 desc2map_dict_stati
 # 输出文件
 OUTPUT_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/generated_candidates_motif_emb.pkl'
 
+CANDIDATES_CSV_PATH = './successful_go_combos.csv'
 
 def load_resources():
     print("Loading resources...")
@@ -26,6 +28,14 @@ def load_resources():
     # 1. 加载 Candidates
     with open(CANDIDATES_PATH, 'r') as f:
         candidates = json.load(f)
+
+# 1. 加载 Candidates (修改为读取 CSV)
+    # candidates = []
+    # with open(CANDIDATES_CSV_PATH, 'r', encoding='utf-8') as f:
+    #     # 使用 csv.DictReader 自动处理表头和引号
+    #     reader = csv.DictReader(f)
+    #     for row in reader:
+    #         candidates.append({'group': row['GO_Combo'].split(',')})        
 
     # 2. 加载 GO ID -> Index 映射
     with open(GO_MAPPING_PATH, 'rb') as f:
@@ -98,6 +108,18 @@ def process_data():
     
     new_dataset = []
     print(f"Processing {len(candidates)} groups...")
+
+    semantic_dist = []
+    depth = []
+
+    for c in candidates:
+        semantic_dist.append(c['semantic_dis'])
+        depth.append(np.mean(c['depth']))
+
+    print(np.mean(semantic_dist))
+    print(np.mean(depth))
+
+    exit()
 
     # for i, item in enumerate(tqdm(candidates)):
     #     go_list = item['group']

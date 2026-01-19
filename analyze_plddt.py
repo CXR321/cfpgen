@@ -204,15 +204,16 @@ if __name__ == '__main__':
     folder_path = 'generation-chroma'
     folder_path = 'generation-results-cfpgen_650m'
     folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-mf_cf-4wstep'
+    folder_path = 'generation-results-dplm2-goonly-struct'
 
     
     folder_path = './' + folder_path + '/esmfold_pdb'
 
 
-    folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-random/esmfold_pdb'
-    folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-len/esmfold_pdb'
+    # folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-random/esmfold_pdb'
+    # folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-len/esmfold_pdb'
 
-    folder_path = '/AIRvePFS/dair/chenxr-data/repo/ProDVa/evaluations/esmfold_pdb'
+    # folder_path = '/AIRvePFS/dair/chenxr-data/repo/ProDVa/evaluations/esmfold_pdb'
 
     stats = calculate_stats(folder_path)
 

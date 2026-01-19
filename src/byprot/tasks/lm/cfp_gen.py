@@ -378,7 +378,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         sample_size = logging_output['sample_size']
         self.eval_loss.update(loss, weight=sample_size)
         self.eval_nll_loss.update(logging_output['nll_loss'], weight=sample_size)
-        self.eval_original_loss.update(logging_output['original_loss'], weight=sample_size)
+        self.eval_original_loss.update(logging_output.get('original_loss', 0), weight=sample_size)
         self.eval_attn_loss.update(logging_output.get('attn_loss', 0), weight=sample_size)
         self.eval_contrast_loss.update(logging_output.get('contrast_loss', 0), weight=sample_size)
 

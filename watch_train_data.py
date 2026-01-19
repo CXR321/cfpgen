@@ -441,13 +441,13 @@ if __name__ == '__main__':
     # print("============================")
     # print(train_data[0])
 
-
-    train_data = load_all_pfam_emb_data("train")
+# 
+    # train_data = load_all_pfam_emb_data("train")
     # valid_data = load_all_pfam_emb_data("valid")
-    # test_data = load_all_pfam_emb_data("test")
+    test_data = load_all_pfam_emb_data("test")
     
-    for data in train_data:
-    # for data in test_data:
+    # for data in train_data:
+    for data in test_data:
         # if data['uniprot_id'] == 'Q48KZ8':
         #     # print(data)
         #     print(data['motif'])
@@ -471,18 +471,20 @@ if __name__ == '__main__':
         #     print(data['motif'])
         #     continue
         # oxidoreductase activity / identical protein binding
-        # for motif in motifs:
-        #     # if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
-        #     #     # if motif['end'] - motif['start'] < 50:
-        #     #     print(f"protein: {data['uniprot_id'], data['motif']}")
-        #     #     break
+        for motif in motifs:
+            # if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
+            # if motif['go_term'] == 'methylenetetrahydrofolate dehydrogenase (NADP+) activity':
+            if len(motif['motif_segment']) >= 40 and len(motif['motif_segment']) <= 60:
+                # if motif['end'] - motif['start'] < 50:
+                print(f"protein: {data['uniprot_id'], data['motif']}")
+                break
         #     if motif['go_term'] == 'obsolete 2,3-bisphosphoglycerate-dependent phosphoglycerate mutase activity':
         #         print(f"protein: {data['uniprot_id'], data['motif']}")
         #         break
 
-        for go_number in data['go_numbers'] ['F']:
-            if go_number == "GO:0008176":
-                print(data)
+        # for go_number in data['go_numbers'] ['F']:
+        #     if go_number == "GO:0008176":
+        #         print(data)
 
     exit()
 

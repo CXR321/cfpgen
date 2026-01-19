@@ -260,28 +260,19 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
                 # exit()
 
                 if config.get('use_only_struct', False):
-                    batch_size = struct_tokens.shape[0]
+                    output_results = list(
+                        map(
+                            lambda s: ",".join(s.split()),
+                            tokenizer.batch_decode(
+                                struct_tokens, skip_special_tokens=True
+                            ),
+                        )
+                    )     
 
-                    for batch_idx in range(batch_size):
-                        # 获取当前批次的结构 token
-                        current_struct_tokens = struct_tokens[batch_idx]
-                        
-                        # 转换为 CPU 和 Python 列表（如果是在 GPU 上）
-                        if current_struct_tokens.is_cuda:
-                            tokens_list = current_struct_tokens.cpu().numpy().tolist()
-                        else:
-                            tokens_list = current_struct_tokens.numpy().tolist()
-                        
-                        tokens_list = tokens_list[1:-1]
-
-                        assert len(tokens_list) == seq_len
-
-                        # 转换为逗号分隔的字符串
-                        tokens_str = ",".join(str(token) for token in tokens_list)
-                        
-                        # 写入文件
-                        fp_save.write(f">SEQUENCE_ID=={seq_id}_L={seq_len}\n")
-                        fp_save.write(f"{tokens_str}\n")                   
+                    for _, seq in enumerate(output_results):
+                        seq = seq.replace(" ", "")
+                        fp_save.write(f">SEQUENCE_ID={seq_id}_L={seq_len}\n")
+                        fp_save.write(f"{seq}\n")                     
                 else:
 
                     output_results = list(
