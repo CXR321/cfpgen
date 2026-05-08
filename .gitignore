@@ -168,7 +168,11 @@ run/logs
 *.gz
 *.png
 *.csv
+*.json
+*.a3m
+*.gz
 
+evaluat_fasta/*
 deepgo2/
 temp_checkpoints/
 byprot-checkpoints/
@@ -182,4 +186,4 @@ data-bin/
 checkpoints/
 pretrained/*
 byprot-checkpoints-temp/*
-vendor/*
+vendor/**

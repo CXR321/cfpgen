@@ -194,26 +194,24 @@ def get_net(cfg):
         peft_config = LoraConfig(
             task_type=TaskType.SEQ_2_SEQ_LM, 
             target_modules=lora_target_module,
-            modules_to_save=modules_to_save,
+            # modules_to_save=modules_to_save,
             inference_mode=False, r=cfg.lora.lora_rank, lora_alpha=32, lora_dropout=cfg.lora.lora_dropout
         )
         net = get_peft_model(net, peft_config)
 
-    # for param in net.parameters():
-    #     param.requires_grad = False
-    
-    # # 定义要训练的部分
-    # modules_to_save = [
-    #     'esm.encoder.go_embedder',
-    #     'esm.encoder.ipr_embedder',
-    #     'esm.encoder.layer.*.adaLN_modulation.1.*'
-    # ]
-    
-    # # 精确解冻指定模块
-    # import fnmatch
-    # for name, param in net.named_parameters():
-    #     if any(fnmatch.fnmatch(name, pattern) for pattern in modules_to_save):
-    #         param.requires_grad = True
+        # 满足“其他所有模块都要正常训练”的要求
+        import re
+        for name, param in net.named_parameters():
+            if 'lora_' in name:
+                param.requires_grad = True
+            elif re.search(lora_target_module, name):
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+        trainable = sum(p.numel() for p in net.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in net.parameters())
+        print(f"✅ 混合训练模式开启: 可训练参数比例 {100 * trainable / total:.2f}%")
+        # exit()
 
     def check_gradient_status(net):
         """检查模型参数的梯度状态"""
@@ -231,6 +229,7 @@ def get_net(cfg):
         print(f"Trainable ratio: {trainable_params/total_params*100:.2f}%")
     
     check_gradient_status(net)
+    # exit()
 
     return net
 

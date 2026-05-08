@@ -60,7 +60,9 @@ run_name: go-ipr-500iter-repeat_cut
 
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me_weight-headclloss-2.0_sn-pnwandb/checkpoints/step_139999.0-loss_0.82.ckpt
 
-ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb/checkpoints/step_109999.0-loss_0.89.ckpt # best
+# ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb/checkpoints/step_109999.0-loss_0.89.ckpt # best
+
+ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pn-lora-wandb/checkpoints/step_29999.0-loss_0.80.ckpt
 
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_struct_only/checkpoints/step_49999.0-loss_0.51.ckpt
 
@@ -68,7 +70,7 @@ ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata
 # ckpt_path: byprot-checkpoints/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_headclloss-1.0_sn-pnwandb/checkpoints/step_39999.0-loss_0.90.ckpt
 
 # input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_expanded.pkl
-input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl
+input_data: /AIRvePFS/dair/chenxr-data/repo/cfpgen/data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl
 # input_data: data-bin/uniprotKB/cfpgen_general_dataset/generated_candidates_motif_emb.pkl
 
 # saveto: generation-results-dplm2-diff-cross-8wstep/
@@ -91,8 +93,9 @@ input_data: data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_p
 # saveto: generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/
 # saveto: generation-results-dplm2-goonly-new-unseen-filter/
 # saveto: generation-results-dplm2-goonly-struct/
-saveto:  generation-debug/
-
+# saveto:  generation-debug/
+# saveto: generation-codefp-clf/
+saveto: generation-codefp-lora/
 num_seqs: 1
 
 seq_lens: [200, 400]  # for general proteins
@@ -111,7 +114,7 @@ use_func_cross_attn: true
 use_motif_struct_emb: true
 use_static_scale: true
 
-# use_only_struct: true
+use_only_struct: false
 
 # use_diff_modulation: true
 # use_func_cross_attn: true
@@ -130,6 +133,7 @@ use_motif_mean: false
 
 sampling_strategy: annealing@2.0:1.0
 max_iter: 500 # 100 ori
+use_classifier_free_guidance: false
+cfg_scale: 1.5
 
 debug: false
-

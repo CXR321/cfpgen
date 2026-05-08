@@ -115,7 +115,10 @@ if _RICH_AVAILABLE:
                 self._reset_progress_bar_ids()
                 reconfigure(**self._console_kwargs)
                 self._console = get_console()
-                self._console.clear_live()
+                try:
+                    self._console.clear_live()
+                except IndexError:
+                    pass
                 self._metric_component = BetterMetricsTextColumn(trainer, self.theme.metrics, text_delimiter=',', metrics_format='.2f')
                 self.progress = CustomProgress(
                     *self.configure_columns(trainer),

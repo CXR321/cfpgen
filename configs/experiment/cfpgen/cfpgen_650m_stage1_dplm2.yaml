@@ -50,7 +50,7 @@ model:
     motif_max_len: 30
 
   lora:
-    lora: false
+    lora: true
     lora_rank: 16
     lora_dropout: 0.1
     lora_target_module: (esm.encoder.layer.[0-9]*.attention.(self.query|self.key|self.value|output.dense).*|esm.encoder.layer.[0-9]*.(intermediate|output).dense.*)
@@ -74,14 +74,14 @@ model:
   use_diff_modulation: true
   use_func_cross_attn: true
   use_diff_ce: false
-  use_motif_struct_emb: false
+  use_motif_struct_emb: true
   use_static_scale: true
   use_attention_store: false
   use_go_null_token: ${datamodule.use_go_null_token}
-  use_motif_head: false
+  use_motif_head: true
 
 
-  use_only_struct: true
+  use_only_struct: false
 
 
 task:

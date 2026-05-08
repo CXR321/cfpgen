@@ -9,6 +9,7 @@ from src.byprot.utils.ontology import Ontology
 # ================= 配置 =================
 TSV_PATH = './generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_preds_mf.tsv'
 TSV_PATH = './generation-results-cfpgen_650m/cfpgen_650m_go_preds_mf.tsv'
+# TSV_PATH = './data-bin/uniprotKB/cfpgen_general_dataset/test_preds_mf.tsv'
 
 TRAIN_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 TEST_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'

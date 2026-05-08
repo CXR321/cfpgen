@@ -429,18 +429,18 @@ def main():
     print("\nGenerating Distribution Violin Plots (Bold & Tall Style)...")
     
     # --- 1. 强化绘图配置 (字体加粗，字号加大) ---
-    sns.set_theme(style="whitegrid", context="paper")
+    sns.set_theme(style="whitegrid", context="paper", font_scale=2)
     
     plt.rcParams.update({
         'font.family': 'serif',
         'font.weight': 'bold',         # 全局字体加粗
         'axes.labelweight': 'bold',    # 轴标签加粗
         'axes.titleweight': 'bold',    # 标题加粗
-        'axes.titlesize': 18,          # 标题字号
-        'axes.labelsize': 16,          # 标签字号
-        'xtick.labelsize': 14,         # x轴刻度字号
-        'ytick.labelsize': 14,         # y轴刻度字号
-        'legend.fontsize': 14,
+        'axes.titlesize': 20,          # 标题字号
+        'axes.labelsize': 18,          # 标签字号
+        'xtick.labelsize': 18,         # x轴刻度字号
+        'ytick.labelsize': 18,         # y轴刻度字号
+        'legend.fontsize': 18,
     })
     
     # 颜色方案
@@ -492,7 +492,7 @@ def main():
     # --- 5. 全局布局调整 ---
     plt.tight_layout(pad=3.0)
     
-    save_path = 'analysis_violin_distributions_bold.png'
+    save_path = 'analysis_violin_distributions_bold_large.png'
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"Bold & Tall Violin plots saved to '{save_path}'")
     

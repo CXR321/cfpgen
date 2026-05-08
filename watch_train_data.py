@@ -446,6 +446,8 @@ if __name__ == '__main__':
     # valid_data = load_all_pfam_emb_data("valid")
     test_data = load_all_pfam_emb_data("test")
     
+    # print(test_data[60])
+    # exit()
     # for data in train_data:
     for data in test_data:
         # if data['uniprot_id'] == 'A8FMQ2':
@@ -454,7 +456,8 @@ if __name__ == '__main__':
         #     # exit()
         # if data['uniprot_id'] == 'Q3J6D1':
         #     print(data)
-
+        if data['uniprot_id'] != 'C8WJW0':   
+            continue
 
         print(data)
         exit()

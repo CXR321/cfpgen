@@ -414,12 +414,26 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
 
         super().on_validation_epoch_end()
 
+    def configure_optimizers(self):
+        # 核心修改：只过滤出 requires_grad == True 的参数传给优化器
+        trainable_params = filter(lambda p: p.requires_grad, self.trainer.model.parameters())
+        
+        optimizer = get_optimizer(self.hparams.optimizer, trainable_params)
+        
+        if "lr_scheduler" in self.hparams and self.hparams.lr_scheduler is not None:
+            lr_scheduler, extra_kwargs = get_scheduler(self.hparams.lr_scheduler, optimizer)
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {"scheduler": lr_scheduler, **extra_kwargs},
+            }
+        return optimizer
+
     # def configure_optimizers(self):
     #     """Choose what optimizers and learning-rate schedulers to use in your optimization.
     #     Normally you'd need one. But in the case of GANs or similar you might have multiple.
 
     #     See examples here:
-    #         https://pytorch-lightning.readthedocs.io/en/latest/common/lightning_module.html#configure-optimizers
+    #         https://pytorch-lightning.readthedocs.io/en/latWest/common/lightning_module.html#configure-optimizers
     #     """
 
     #     if 'encoder' in self.hparams.model: # cfp_gen_if

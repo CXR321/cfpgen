@@ -1643,6 +1643,7 @@ class CFPGenEncoderDPLM2(EsmEncoder):
         '''
         # TODO: 主要是处理seq struct双通道的，暂时不做
         if self.seq_controlnet and anno_tag['seq_cond'] is not None and anno_tag['seq_cond'].numel() > 0 and False:
+            raise NotImplementedError("RCFE is not implemented yet.")
 
             motif = anno_tag['seq_cond']
           

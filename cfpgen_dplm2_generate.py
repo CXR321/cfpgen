@@ -226,6 +226,7 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
         set_seed(config.get('seed', 42) + gpu_idx)
 
         with open(part_fasta_filename, 'a') as fp_save:
+            part_data = random.sample(part_data, 500)
             for index, row in enumerate(part_data):
 
                 sequence = row['sequence']
@@ -243,16 +244,32 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
                 # partial_mask = batch['input_ids'].ne(model.mask_id).type_as(batch['input_mask'])
                 partial_mask = None
 
-                print(batch)
-                exit(0)
+                # print(batch)
+                # exit(0)
 
                 # print(f"input_ids: {batch}")
                 with autocast():
-                    outputs = model.generate(batch=batch,
-                                             max_iter=config['max_iter'],
-                                             sampling_strategy=config['sampling_strategy'],
-                                             partial_masks=partial_mask, use_struct_only=config['use_only_struct'],)
+                    if config.get("use_classifier_free_guidance", False):
+                        print("use clf guidance")
+                        outputs = model.generate_cfg(
+                            batch=batch,
+                            guidance_scale=config.get("cfg_scale", 1.5),
+                            max_iter=config["max_iter"],
+                            sampling_strategy=config["sampling_strategy"],
+                            partial_masks=partial_mask,
+                            use_struct_only=config["use_only_struct"],
+                        )
+                    else:
+                        outputs = model.generate(
+                            batch=batch,
+                            max_iter=config["max_iter"],
+                            sampling_strategy=config["sampling_strategy"],
+                            partial_masks=partial_mask,
+                            use_struct_only=config["use_only_struct"],
+                        )
 
+                # exit()
+                # print(outputs[2])
                 # exit()
 
 
@@ -261,6 +278,7 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
 
                 # print(struct_tokens)
                 # exit()
+                # print(aatype_tokens)
 
                 if config.get('use_only_struct', False):
                     output_results = list(
@@ -286,6 +304,8 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
                             ),
                         )
                     )
+                    # print(output_results)
+                    # exit()
 
                     for _, seq in enumerate(output_results):
                         seq = seq.replace(" ", "")

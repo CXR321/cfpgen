@@ -15,8 +15,8 @@ from src.byprot.utils.ontology import Ontology
 # TSV_PATH = './generation-results-cfpgen_650m_unseen/cfpgen_650m_go_nondup_preds_mf.tsv'
 TSV_PATH = './generation-results-dplm2-goonly-unseen-all/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_nondup_preds_mf.tsv'
 
-TSV_PATH = './generation-results-cfpgen_650m/cfpgen_650m_go_preds_mf.tsv'
-TSV_PATH = './generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_preds_mf.tsv'
+# TSV_PATH = './generation-results-cfpgen_650m/cfpgen_650m_go_preds_mf.tsv'
+# TSV_PATH = './generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_preds_mf.tsv'
 TRAIN_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 TEST_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 GO_MAPPING_PATH = 'go_mapping.pkl'
@@ -139,10 +139,15 @@ all_raw_ids = []
 all_pids = []
 
 # 1. Collect and Propagate Data
+all_runs = defaultdict(lambda: {'gt': [], 'pred': [], 'raw_id': [], 'pid': []})
+
 for raw_id, group in tqdm(instance_groups, desc="Propagating"):
     pid = group['uniprot_id'].iloc[0]
     
     if pid in strict_unseen_targets:
+        # Extract repeat index
+        repeat_idx = raw_id.split('_')[-1] if 'SEQUENCE_ID=' in raw_id else '0'
+        
         # Get raw sets
         gt_set_raw = strict_unseen_targets[pid]
         pred_set_raw = set(group['go_id'])
@@ -161,6 +166,9 @@ for raw_id, group in tqdm(instance_groups, desc="Propagating"):
         all_pred_propagated.append(pred_prop)
         all_raw_ids.append(raw_id)
         all_pids.append(pid)
+        
+        all_runs[repeat_idx]['gt'].append(gt_prop)
+        all_runs[repeat_idx]['pred'].append(pred_prop)
     
     
 
@@ -187,19 +195,69 @@ mlb.fit(final_gt_list + final_pred_list)
 y_true = mlb.transform(final_gt_list)
 y_pred = mlb.transform(final_pred_list)
 
-# Global Metrics
-f1_mic = f1_score(y_true, y_pred, average='micro', zero_division=0)
-f1_mac = f1_score(y_true, y_pred, average='macro', zero_division=0)
-rec_mic = recall_score(y_true, y_pred, average='micro', zero_division=0)
-prec_mic = precision_score(y_true, y_pred, average='micro', zero_division=0)
+# Global Metrics (over all runs flattened)
+f1_mic_all = f1_score(y_true, y_pred, average='micro', zero_division=0)
+f1_mac_all = f1_score(y_true, y_pred, average='macro', zero_division=0)
+rec_mic_all = recall_score(y_true, y_pred, average='micro', zero_division=0)
+prec_mic_all = precision_score(y_true, y_pred, average='micro', zero_division=0)
+
+# 4. Calculate Metrics Per Run
+run_metrics = {'f1_mic': [], 'f1_mac': [], 'rec_mic': [], 'prec_mic': []}
+
+merged_runs = defaultdict(lambda: {'gt': [], 'pred': [], 'raw_id': [], 'pid': []})
+
+# for i in range(0, 10, 2):
+#     k1 = str(i)
+#     k2 = str(i+1)
+#     new_key = f"{k1}_{k2}" # 新的 key 会变成 '0_1', '2_3' 等
+    
+#     # 将两个 run 的列表直接相加（拼接）
+#     merged_runs[new_key]['gt'] = all_runs[k1]['gt'] + all_runs[k2]['gt']
+#     merged_runs[new_key]['pred'] = all_runs[k1]['pred'] + all_runs[k2]['pred']
+#     merged_runs[new_key]['raw_id'] = all_runs[k1]['raw_id'] + all_runs[k2]['raw_id']
+#     merged_runs[new_key]['pid'] = all_runs[k1]['pid'] + all_runs[k2]['pid']
+
+# for run_idx, run_data in merged_runs.items():
+
+#     print(run_data)
+
+#     unique_go = set().union(*run_data['gt']) & set().union(*run_data['pred'])
+
+#     run_gt_list = [[go for go in gt_s if go in unique_go] for gt_s in run_data['gt']]
+#     run_pred_list = [[go for go in pred_s if go in unique_go] for pred_s in run_data['pred']]
+
+#     # print(run_gt_list)
+#     # print(run_pred_list)
+
+#     mlb = MultiLabelBinarizer()
+#     mlb.fit(run_gt_list + run_pred_list)
+    
+#     y_true_run = mlb.transform(run_gt_list)
+#     y_pred_run = mlb.transform(run_pred_list)
+    
+#     run_metrics['f1_mic'].append(f1_score(y_true_run, y_pred_run, average='micro', zero_division=0))
+#     run_metrics['f1_mac'].append(f1_score(y_true_run, y_pred_run, average='macro', zero_division=0))
+#     run_metrics['rec_mic'].append(recall_score(y_true_run, y_pred_run, average='micro', zero_division=0))
+#     run_metrics['prec_mic'].append(precision_score(y_true_run, y_pred_run, average='micro', zero_division=0))
+
+f1_mic_mean, f1_mic_std = np.mean(run_metrics['f1_mic']), np.std(run_metrics['f1_mic'])
+f1_mac_mean, f1_mac_std = np.mean(run_metrics['f1_mac']), np.std(run_metrics['f1_mac'])
+rec_mic_mean, rec_mic_std = np.mean(run_metrics['rec_mic']), np.std(run_metrics['rec_mic'])
+prec_mic_mean, prec_mic_std = np.mean(run_metrics['prec_mic']), np.std(run_metrics['prec_mic'])
 
 print("\n" + "="*60)
 print("METRICS REPORT (Official Logic: Propagation + Intersection)")
 print("="*60)
-print(f"Micro F1:        {f1_mic:.4f}")
-print(f"Macro F1:        {f1_mac:.4f}")
-print(f"Micro Recall:    {rec_mic:.4f}")
-print(f"Micro Precision: {prec_mic:.4f}")
+print(f"Overall (Flattened):")
+print(f"Micro F1:        {f1_mic_all:.4f}")
+print(f"Macro F1:        {f1_mac_all:.4f}")
+print(f"Micro Recall:    {rec_mic_all:.4f}")
+print(f"Micro Precision: {prec_mic_all:.4f}")
+# print("\nPer Run (Mean ± Std):")
+# print(f"Micro F1:        {f1_mic_mean:.4f} ± {f1_mic_std:.4f}")
+# print(f"Macro F1:        {f1_mac_mean:.4f} ± {f1_mac_std:.4f}")
+# print(f"Micro Recall:    {rec_mic_mean:.4f} ± {rec_mic_std:.4f}")
+# print(f"Micro Precision: {prec_mic_mean:.4f} ± {prec_mic_std:.4f}")
 
 # ================= 6. Identify Exact Matches =================
 # An "Exact Match" in this context is defined as a sample where

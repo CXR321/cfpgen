@@ -873,6 +873,13 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             for k, v in pretrained_state_dict.items():
                 new_pretrained_state_dict[k[6:]] = v
             model.load_state_dict(new_pretrained_state_dict, strict=True)
+
+            def count_all_parameters(model):
+                return sum(p.numel() for p in model.parameters())
+
+            total_params = count_all_parameters(model)
+            print(f"模型总参数量: {total_params:,}")
+            
             return model
         else:
             # Load DPLM model checkpoint from huggingface
@@ -1756,6 +1763,137 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             hidden_states=net_out["last_hidden_state"],
         )
 
+    def forward_decoder_cfg(
+        self,
+        prev_decoder_out,
+        guidance_scale,
+        need_attn_weights=False,
+        partial_masks=None,
+        sampling_strategy="gumbel_argmax",
+        go_label=None,
+        ipr_label=None,
+        seq_cond=None,
+        ec_label=None,
+        motif_struct_emb=None,
+    ):
+        output_tokens = prev_decoder_out["output_tokens"].clone()
+        output_scores = prev_decoder_out["output_scores"].clone()
+        step, max_step = prev_decoder_out["step"], prev_decoder_out["max_step"]
+        temperature = prev_decoder_out["temperature"]
+        history = prev_decoder_out["history"]
+
+        output_masks = self.get_non_special_symbol_mask(
+            output_tokens, partial_masks=partial_masks
+        )
+        type_ids = self.get_modality_type(output_tokens)
+
+        input_mask = output_tokens.ne(self.pad_id)
+        L = output_tokens.shape[1]
+        num_heads = self.net.config.num_attention_heads
+        attention_bias: torch.FloatType = (
+            self.net.esm.get_extended_attention_mask(
+                input_mask, output_tokens.shape
+            ).repeat(1, num_heads, L, 1)
+        )
+
+        cond_inputs = dict(
+            x_t=output_tokens,
+            go=go_label,
+            ipr=ipr_label,
+            seq_cond=seq_cond,
+            ec=ec_label,
+            motif_struct_emb=motif_struct_emb,
+        )
+        uncond_inputs = dict(
+            x_t=output_tokens,
+            go=torch.full_like(go_label, -1) if go_label is not None else None,
+            ipr=torch.full_like(ipr_label, -1) if ipr_label is not None else None,
+            seq_cond=torch.zeros_like(seq_cond) if seq_cond is not None else None,
+            ec=torch.full_like(ec_label, -1) if ec_label is not None else None,
+            motif_struct_emb=torch.zeros_like(motif_struct_emb)
+            if motif_struct_emb is not None
+            else None,
+        )
+
+        cond_out = self.net(
+            input_ids=cond_inputs, attention_mask=attention_bias, type_ids=type_ids
+        )
+        uncond_out = self.net(
+            input_ids=uncond_inputs, attention_mask=attention_bias, type_ids=type_ids
+        )
+
+        cond_logits = cond_out["logits"]
+        uncond_logits = uncond_out["logits"]
+        logits = uncond_logits + guidance_scale * (cond_logits - uncond_logits)
+        attentions = cond_out["attentions"] if need_attn_weights else None
+
+        if logits.dtype != output_scores.dtype:
+            logits = logits.type_as(output_scores)
+
+        aa_position = type_ids.eq(self.aa_type) & output_masks
+        struct_position = type_ids.eq(self.struct_type) & output_masks
+        indices_aa = torch.where(aa_position)
+        indices_struct = torch.where(struct_position)
+
+        logits[indices_aa[0], indices_aa[1], 33:] = -math.inf
+        logits[indices_struct[0], indices_struct[1], :33] = -math.inf
+        logits[..., self.special_token_list] = -math.inf
+        logits = top_k_top_p_filtering(logits, top_p=0.95)
+
+        if sampling_strategy == "argmax":
+            _scores, _tokens = logits.max(-1)
+        elif sampling_strategy == "gumbel_argmax":
+            noise_scale = temperature
+            _tokens, _scores = stochastic_sample_from_categorical(
+                logits, temperature=0.0, noise_scale=noise_scale
+            )
+            self.resample_conditional(
+                _tokens,
+                _scores,
+                ratio=0.25,
+                scale=1.0,
+                go=go_label,
+                ipr=ipr_label,
+                seq_cond=seq_cond,
+                ec=ec_label,
+                motif_struct_emb=motif_struct_emb,
+            )
+            _tokens.masked_scatter_(~output_masks, output_tokens[~output_masks])
+        elif sampling_strategy.startswith("annealing"):
+            max_temp, min_temp = map(
+                float, sampling_strategy.split("@")[1].split(":")
+            )
+            rate = 1 - step / max_step
+            temperature = min_temp + (max_temp - min_temp) * rate
+            _tokens, _scores = sample_from_categorical(logits, temperature=temperature)
+            self.resample_conditional(
+                _tokens,
+                _scores,
+                ratio=0.25,
+                scale=1.0,
+                go=go_label,
+                ipr=ipr_label,
+                seq_cond=seq_cond,
+                ec=ec_label,
+                motif_struct_emb=motif_struct_emb,
+            )
+        else:
+            _tokens, _scores = sample_from_categorical(logits, temperature=temperature)
+
+        output_tokens.masked_scatter_(output_masks, _tokens[output_masks])
+        output_scores.masked_scatter_(output_masks, _scores[output_masks])
+        history.append(output_tokens.clone())
+
+        return dict(
+            output_tokens=output_tokens,
+            output_scores=output_scores,
+            attentions=attentions,
+            step=step + 1,
+            max_step=max_step,
+            history=history,
+            hidden_states=cond_out["last_hidden_state"],
+        )
+
     # def _reparam_decoding(
     #     self,
     #     output_tokens,
@@ -2201,3 +2339,121 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         decoder_out = prev_decoder_out
         return decoder_out['output_tokens'], decoder_out['output_scores'], history_detail
+
+    def generate_cfg(
+        self,
+        batch,
+        guidance_scale=1.5,
+        max_iter=None,
+        temperature=1.0,
+        partial_masks=None,
+        unmasking_strategy="stochastic1.0",
+        sampling_strategy="gumbel_argmax",
+        use_struct_only=False,
+    ):
+        self.eval()
+        max_iter = max_iter
+        temperature = temperature
+
+        encoder_out = self.forward_encoder(batch)
+        initial_output_tokens, initial_output_scores = self.initialize_output_tokens(
+            batch.get("input_ids"), encoder_out=encoder_out, partial_masks=partial_masks
+        )
+        prev_decoder_out = dict(
+            output_tokens=initial_output_tokens,
+            output_scores=initial_output_scores,
+            output_masks=None,
+            attentions=None,
+            step=0,
+            max_step=max_iter,
+            history=[initial_output_tokens.clone()],
+            temperature=temperature,
+            type_ids=self.get_modality_type(initial_output_tokens),
+        )
+
+        prev_decoder_out["output_masks"] = self.get_non_special_symbol_mask(
+            prev_decoder_out["output_tokens"], partial_masks=partial_masks
+        )
+
+        history_detail = []
+        last_mask = prev_decoder_out["output_masks"].clone()
+
+        for step in tqdm(range(max_iter), desc="Decoding"):
+            with torch.no_grad():
+                decoder_out = self.forward_decoder_cfg(
+                    prev_decoder_out=prev_decoder_out,
+                    guidance_scale=guidance_scale,
+                    partial_masks=partial_masks,
+                    sampling_strategy=sampling_strategy,
+                    go_label=batch.get("go_label", None),
+                    ipr_label=batch.get("ipr_label", None),
+                    seq_cond=batch.get("seq_cond", None),
+                    ec_label=batch.get("ec_label", None),
+                    motif_struct_emb=batch.get("motif_struct_emb", None),
+                )
+
+            output_tokens = decoder_out["output_tokens"]
+            output_scores = decoder_out["output_scores"]
+
+            non_special_sym_mask = self.get_non_special_symbol_mask(
+                prev_decoder_out["output_tokens"], partial_masks=partial_masks
+            )
+
+            (
+                output_masks,
+                result_tokens,
+                result_scores,
+            ) = self._reparam_decoding(
+                output_tokens=prev_decoder_out["output_tokens"].clone(),
+                output_scores=prev_decoder_out["output_scores"].clone(),
+                cur_tokens=output_tokens.clone(),
+                cur_scores=output_scores.clone(),
+                decoding_strategy=f"reparam-uncond-{unmasking_strategy}-linear",
+                xt_neq_x0=prev_decoder_out["output_masks"],
+                type_ids=prev_decoder_out["type_ids"].clone(),
+                non_special_sym_mask=non_special_sym_mask,
+                t=step + 1,
+                max_step=max_iter,
+                use_struct_only=use_struct_only,
+            )
+
+            demask_pos = ((last_mask == 1) & (output_masks == 0)).nonzero(
+                as_tuple=True
+            )
+            remask_pos = ((last_mask == 0) & (output_masks == 1)).nonzero(
+                as_tuple=True
+            )
+            history_detail.append(
+                {
+                    "step": step + 1,
+                    "tokens": output_tokens.cpu(),
+                    "scores": output_scores.cpu(),
+                    "mask": output_masks.cpu(),
+                    "demask_pos": [
+                        x for x in zip(*[d.cpu().tolist() for d in demask_pos])
+                    ],
+                    "remask_pos": [
+                        x for x in zip(*[d.cpu().tolist() for d in remask_pos])
+                    ],
+                    "pred_tokens": decoder_out["output_tokens"],
+                }
+            )
+            last_mask = output_masks.clone()
+
+            prev_decoder_out.update(output_masks=output_masks)
+            output_tokens = result_tokens
+            output_scores = result_scores
+
+            prev_decoder_out.update(
+                output_tokens=output_tokens,
+                output_scores=output_scores,
+                step=step + 1,
+                history=decoder_out["history"],
+            )
+
+        decoder_out = prev_decoder_out
+        return (
+            decoder_out["output_tokens"],
+            decoder_out["output_scores"],
+            history_detail,
+        )
