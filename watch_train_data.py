@@ -448,13 +448,17 @@ if __name__ == '__main__':
     
     # for data in train_data:
     for data in test_data:
-        # if data['uniprot_id'] == 'Q48KZ8':
+        # if data['uniprot_id'] == 'A8FMQ2':
         #     # print(data)
-        #     print(data['motif'])
-        #     exit()
-        # print(data)
-        # exit()
-        motifs = data['motif']
+        #     print(data)
+        #     # exit()
+        # if data['uniprot_id'] == 'Q3J6D1':
+        #     print(data)
+
+
+        print(data)
+        exit()
+        # motifs = data['motif']
         # print(data)
         # exit()
 
@@ -471,13 +475,13 @@ if __name__ == '__main__':
         #     print(data['motif'])
         #     continue
         # oxidoreductase activity / identical protein binding
-        for motif in motifs:
-            # if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
-            # if motif['go_term'] == 'methylenetetrahydrofolate dehydrogenase (NADP+) activity':
-            if len(motif['motif_segment']) >= 40 and len(motif['motif_segment']) <= 60:
-                # if motif['end'] - motif['start'] < 50:
-                print(f"protein: {data['uniprot_id'], data['motif']}")
-                break
+        # for motif in motifs:
+        #     # if motif['go_term'] == 'mannitol-1-phosphate 5-dehydrogenase activity' or motif['go_term'] == 'NAD binding':
+        #     # if motif['go_term'] == 'methylenetetrahydrofolate dehydrogenase (NADP+) activity':
+        #     if len(motif['motif_segment']) >= 40 and len(motif['motif_segment']) <= 60:
+        #         # if motif['end'] - motif['start'] < 50:
+        #         print(f"protein: {data['uniprot_id'], data['motif']}")
+        #         break
         #     if motif['go_term'] == 'obsolete 2,3-bisphosphoglycerate-dependent phosphoglycerate mutase activity':
         #         print(f"protein: {data['uniprot_id'], data['motif']}")
         #         break

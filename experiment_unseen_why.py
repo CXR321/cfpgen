@@ -7,6 +7,8 @@ import networkx as nx
 from collections import defaultdict, Counter
 from tqdm import tqdm
 from src.byprot.utils.ontology import Ontology
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 random.seed(42)
 
@@ -420,6 +422,83 @@ def main():
     pd.DataFrame(significance_results).to_csv('analysis_statistical_significance.csv', index=False)
     print("\nSaved raw data to 'analysis_semantic_distances_raw.csv'")
     print("Saved statistical tests to 'analysis_statistical_significance.csv'")
+
+
+
+## ================= 6. 可视化：分布小提琴图 (Violin Plots) =================
+    print("\nGenerating Distribution Violin Plots (Bold & Tall Style)...")
+    
+    # --- 1. 强化绘图配置 (字体加粗，字号加大) ---
+    sns.set_theme(style="whitegrid", context="paper")
+    
+    plt.rcParams.update({
+        'font.family': 'serif',
+        'font.weight': 'bold',         # 全局字体加粗
+        'axes.labelweight': 'bold',    # 轴标签加粗
+        'axes.titleweight': 'bold',    # 标题加粗
+        'axes.titlesize': 18,          # 标题字号
+        'axes.labelsize': 16,          # 标签字号
+        'xtick.labelsize': 14,         # x轴刻度字号
+        'ytick.labelsize': 14,         # y轴刻度字号
+        'legend.fontsize': 14,
+    })
+    
+    # 颜色方案
+    custom_palette = ["#4c72b0", "#dd8452", "#c44e52"] 
+    x_order = ['Exact Match', 'Partial Match', 'Fail']
+    
+    # --- 2. 创建画布 (调高图片高度: figsize 从 (18,6) 改为 (18, 8)) ---
+    fig, axes = plt.subplots(1, 3, figsize=(18, 8)) 
+    
+    plot_configs = [
+        ('GT_Intra_Dist', 'GT Intra-Set Distance', 'Semantic Distance'),
+        ('Pred_Intra_Dist', 'Pred Intra-Set Distance', 'Semantic Distance'),
+        ('Avg_Depth', 'Mean GO Term Depth', 'Hierarchical Depth')
+    ]
+
+    for ax, (col, title, ylabel) in zip(axes, plot_configs):
+        plot_data = df_res.dropna(subset=[col])
+        
+        # 3. 绘制小提琴图
+        sns.violinplot(
+            data=plot_data, 
+            x='match_status', 
+            y=col, 
+            ax=ax, 
+            order=x_order, 
+            palette=custom_palette, 
+            linewidth=2.5,  # 线条加粗
+            cut=0 
+        )
+
+        # 设置 y 轴限位（根据你的数据分布可微调）
+        if col == 'GT_Intra_Dist' or col == 'Pred_Intra_Dist':
+            ax.set_ylim(0, 10)
+
+        # 4. 细节美化
+        ax.set_title(title, pad=20)
+        ax.set_xlabel('') 
+        ax.set_ylabel(ylabel)
+        
+        # 加粗刻度线和边框
+        for spine in ax.spines.values():
+            spine.set_linewidth(2)
+        ax.tick_params(direction='out', length=6, width=2)
+
+        # 移除顶部和右侧边框
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    # --- 5. 全局布局调整 ---
+    plt.tight_layout(pad=3.0)
+    
+    save_path = 'analysis_violin_distributions_bold.png'
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Bold & Tall Violin plots saved to '{save_path}'")
+    
+    plt.show()
+
+# (End of main function)
 
 if __name__ == '__main__':
     main()

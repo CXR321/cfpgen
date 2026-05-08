@@ -4,14 +4,14 @@ import seaborn as sns
 
 # ================= 1. 数据准备 =================
 # Data: [Baseline, Ours]
-labels = ['Baseline', 'Ours']
+labels = ['Baseline (CFP-Gen)', 'Ours']
 
 # Metric 1: F1 Score
-data_f1 = [0.1744, 0.3295]
+data_f1 = [0.174, 0.330]
 
 # Metric 2: Match Rate (Definition: Recall / Coverage of Target Labels)
 # 强调：Baseline 在这里非常低，Ours 有显著提升
-data_match = [0.0277, 0.2160]
+data_match = [5.540, 43.20]
 
 # ================= 2. 绘图风格设置 (ICML Standard) =================
 # 使用 Seaborn 的 paper 上下文，字体稍微调大一点以保证清晰度
@@ -47,17 +47,27 @@ def plot_bars(ax, data, title, ylabel):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.grid(axis='y', linestyle='--', alpha=0.5)
-    ax.grid(axis='x', visible=False) # 不显示X轴网格
+    # ax.grid(axis='x', visible=False) # 不显示X轴网格
 
-    # 添加数值标签 (使用4位小数以精确显示小数值)
-    for rect in rects:
-        height = rect.get_height()
-        ax.annotate(f'{height:.4f}',
-                    xy=(rect.get_x() + rect.get_width() / 2, height),
-                    xytext=(0, 5),  # 垂直偏移 5 points
-                    textcoords="offset points",
-                    ha='center', va='bottom', fontsize=13, weight='bold', color='black')
+    if title=="Partial Match Rate":
 
+        # 添加数值标签 (使用4位小数以精确显示小数值)
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(f'{height:.2f}%',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 5),  # 垂直偏移 5 points
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=13, weight='bold', color='black')
+    else:
+
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(f'{height:.3f}',
+                        xy=(rect.get_x() + rect.get_width() / 2, height),
+                        xytext=(0, 5),  # 垂直偏移 5 points
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=13, weight='bold', color='black')
 # ================= 4. 绘制子图 =================
 
 # Subplot 1: F1 Score
@@ -68,13 +78,13 @@ plot_bars(axes[0], data_f1,
 # Subplot 2: Match Rate (Recall)
 # 这里的标题和Y轴标签准确反映了您的定义
 plot_bars(axes[1], data_match, 
-          title="Target Function Match Rate", 
-          ylabel="Match Rate")
+          title="Partial Match Rate", 
+          ylabel="Match Rate (%)")
 
-# ================= 5. 全局布局与标题 =================
-# 主标题：核心修改点。强调“假设的/非自然的”组合，区别于之前的 OOD/Unseen。
-fig.suptitle("Performance on Hypothetical Functional Combinations (Non-Natural Sets)", 
-             fontsize=18, weight='bold', y=1.05)
+# # ================= 5. 全局布局与标题 =================
+# # 主标题：核心修改点。强调“假设的/非自然的”组合，区别于之前的 OOD/Unseen。
+# fig.suptitle("Performance on Hypothetical Functional Combinations (Non-Natural Sets)", 
+#              fontsize=18, weight='bold', y=1.05)
 
 plt.tight_layout()
 

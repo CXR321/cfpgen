@@ -90,6 +90,7 @@ def extract_plddt_ptm(filename):
 def calculate_stats(folder_path):
     plddt_values = []
     ptm_values = []
+    paired_values = []
     
     # 遍历文件夹中的所有文件
     for filename in os.listdir(folder_path):
@@ -99,6 +100,8 @@ def calculate_stats(folder_path):
                 plddt_values.append(plddt)
             if ptm is not None:
                 ptm_values.append(ptm)
+            if plddt is not None and ptm is not None:
+                paired_values.append((plddt, ptm))
     
     if not plddt_values and not ptm_values:
         print("未找到包含pLDDT或pTM值的PDB文件")
@@ -151,7 +154,22 @@ def calculate_stats(folder_path):
             'ptm_0.9_above': calculate_ptm_percentage_above(0.9),  # pTM > 0.9
         }
         stats['ptm'] = ptm_stats
-    
+
+    if paired_values:
+        paired_array = np.array(paired_values)
+        # paired_array[:, 0] 是 plddt, paired_array[:, 1] 是 ptm
+        
+        # 统计 pLDDT > 70 且 pTM > 0.5
+        # 注意：代码中使用了 > (大于)。如果想要包含边界值(>=)，请修改符号。
+        mask_success = (paired_array[:, 0] > 70) & (paired_array[:, 1] > 0.5)
+        success_count = np.sum(mask_success)
+        success_rate = success_count / len(paired_array) * 100
+        
+        stats['combined'] = {
+            'count': len(paired_values),
+            'plddt_70_ptm_0.5_rate': success_rate
+        }
+
     return stats
 
 def print_stats(stats, folder_path):
@@ -193,6 +211,14 @@ def print_stats(stats, folder_path):
         print(f"pTM ≥ 0.8的百分比: {ptm['ptm_0.8_above']:.2f}%")
         print(f"pTM ≥ 0.9的百分比: {ptm['ptm_0.9_above']:.2f}%")
         print()
+
+    if 'combined' in stats:
+            print("联合筛选统计 (Intersection Metrics):")
+            print("-" * 40)
+            combined = stats['combined']
+            print(f"参与联合统计的文件数: {combined['count']}")
+            print(f"pLDDT > 70 且 pTM > 0.5 的比例: {combined['plddt_70_ptm_0.5_rate']:.2f}%")
+            print()
     
     print("=" * 50)
 
@@ -200,17 +226,17 @@ if __name__ == '__main__':
     # 使用示例
     folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-weight-headclloss-2.0_sn-pn-8wstep'
     folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep'
-    folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-me_sn-pn-4wstep'
-    folder_path = 'generation-chroma'
-    folder_path = 'generation-results-cfpgen_650m'
-    folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-mf_cf-4wstep'
-    folder_path = 'generation-results-dplm2-goonly-struct'
+    # folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-me_sn-pn-4wstep'
+    # folder_path = 'generation-chroma'
+    # folder_path = 'generation-results-cfpgen_650m'
+    # folder_path = 'generation-results-dplm2-goonly-alldata-dm-ca-mf_cf-4wstep'
+    # folder_path = 'generation-results-dplm2-goonly-struct'
 
     
     folder_path = './' + folder_path + '/esmfold_pdb'
 
 
-    # folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-random/esmfold_pdb'
+    folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-random/esmfold_pdb'
     # folder_path = '/AIRvePFS/dair/chenxr-data/repo/Denovo-Pinal/generation-pinal-len/esmfold_pdb'
 
     # folder_path = '/AIRvePFS/dair/chenxr-data/repo/ProDVa/evaluations/esmfold_pdb'

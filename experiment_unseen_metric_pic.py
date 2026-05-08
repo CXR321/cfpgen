@@ -34,7 +34,7 @@ x = np.arange(len(metrics))
 width = 0.35
 
 # Plot bars
-rects1 = axes[0].bar(x - width/2, baseline_scores, width, label='Baseline (CFPGen-650M)', color=colors[0], alpha=0.9, edgecolor='black', linewidth=0.5)
+rects1 = axes[0].bar(x - width/2, baseline_scores, width, label='Baseline (CFP-Gen)', color=colors[0], alpha=0.9, edgecolor='black', linewidth=0.5)
 rects2 = axes[0].bar(x + width/2, ours_scores, width, label='Ours', color=colors[1], alpha=0.9, edgecolor='black', linewidth=0.5)
 
 # Formatting Subplot 1
@@ -60,15 +60,15 @@ autolabel(rects1, axes[0])
 autolabel(rects2, axes[0])
 
 # --- 4. Subplot 2: Exact Match Rate (Bar Chart) ---
-em_labels = ['Baseline (CFPGen-650M)', 'Ours']
+em_labels = ['Baseline (CFP-Gen)', 'Ours']
 em_values = [baseline_em_pct, ours_em_pct]
 x_em = np.arange(len(em_labels))
 
 rects_em = axes[1].bar(x_em, em_values, width=0.5, color=colors, alpha=0.9, edgecolor='black', linewidth=0.5)
 
 # Formatting Subplot 2
-axes[1].set_ylabel('Exact Match Rate (%)')
-axes[1].set_title('Exact Match Consistency', fontsize=14, weight='bold', pad=15)
+axes[1].set_ylabel('Match Rate (%)')
+axes[1].set_title('Exact Match Rate', fontsize=14, weight='bold', pad=15)
 axes[1].set_xticks(x_em)
 axes[1].set_xticklabels(em_labels)
 # Adjusted ylim because 110/760 is approx 14.5%, so 20 is still a good limit
@@ -87,7 +87,7 @@ for i, rect in enumerate(rects_em):
 
 # --- 5. Final Layout Adjustments ---
 # Main Super Title
-fig.suptitle("Performance Comparison: OOD Conditional Generation", fontsize=18, weight='bold', y=1.02)
+# fig.suptitle("Performance Comparison: OOD Conditional Generation", fontsize=18, weight='bold', y=1.02)
 
 plt.tight_layout()
 

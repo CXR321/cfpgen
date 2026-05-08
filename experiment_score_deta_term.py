@@ -125,11 +125,11 @@ def main():
     print("\nApplying custom filters for Top/Bottom selection...")
     
     # --- Top 5 Best ---
-    df_top_candidates = df[df['support'] >= 30].copy()
+    df_top_candidates = df[df['support'] >= 0].copy()
     top5 = df_top_candidates.sort_values(by=['d_rec_ours', 'support'], ascending=[False, False]).head(5)
     
     # --- Top 5 Worst ---
-    df_bottom_candidates = df[df['support'] >= 35].copy()
+    df_bottom_candidates = df[df['support'] >= 0].copy()
     bottom5 = df_bottom_candidates.sort_values(by=['d_rec_ours', 'support'], ascending=[True, False]).head(5)
     
     # Concatenate: Top on top, Bottom reversed at bottom

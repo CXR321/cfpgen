@@ -29,6 +29,9 @@ results = {combo: [] for combo in target_combinations}
 print("Loading data...")
 with open(go_mapping_path, 'rb') as f:
     go_mapping = pickle.load(f)
+
+print(go_mapping)
+exit()
 index_to_go = {v: k for k, v in go_mapping.items()}
 
 with open(test_path, 'rb') as f:

@@ -52,6 +52,8 @@ def load_resources():
     # 4. 加载 Embeddings
     with open(CLS_EMB_PATH, 'rb') as f:
         cls_emb = pickle.load(f)
+        print(cls_emb)
+        exit()
 
     return candidates, go_id_to_index, desc2map_dict, desc2map_dict_statics, cls_emb
 
@@ -119,7 +121,7 @@ def process_data():
     print(np.mean(semantic_dist))
     print(np.mean(depth))
 
-    exit()
+    # exit()
 
     # for i, item in enumerate(tqdm(candidates)):
     #     go_list = item['group']
@@ -244,3 +246,4 @@ def process_data():
 
 if __name__ == "__main__":
     process_data()
+    

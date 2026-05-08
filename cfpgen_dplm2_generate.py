@@ -243,6 +243,9 @@ def process_on_gpu(gpu_idx, part_data, config, part_fasta_filename):
                 # partial_mask = batch['input_ids'].ne(model.mask_id).type_as(batch['input_mask'])
                 partial_mask = None
 
+                print(batch)
+                exit(0)
+
                 # print(f"input_ids: {batch}")
                 with autocast():
                     outputs = model.generate(batch=batch,

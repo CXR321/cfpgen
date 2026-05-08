@@ -12,9 +12,11 @@ from src.byprot.utils.ontology import Ontology
 
 # ================= Configuration =================
 # 1. Paths
-TSV_PATH = './generation-results-cfpgen_650m_unseen/cfpgen_650m_go_nondup_preds_mf.tsv'
-# TSV_PATH = './generation-results-dplm2-goonly-unseen-all/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_nondup_preds_mf.tsv'
+# TSV_PATH = './generation-results-cfpgen_650m_unseen/cfpgen_650m_go_nondup_preds_mf.tsv'
+TSV_PATH = './generation-results-dplm2-goonly-unseen-all/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_nondup_preds_mf.tsv'
 
+TSV_PATH = './generation-results-cfpgen_650m/cfpgen_650m_go_preds_mf.tsv'
+TSV_PATH = './generation-results-dplm2-goonly-alldata-dm-ca-me-scale-0.2-weight-headclloss-2.0_sn-pn-11wstep/cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb_go-ipr-500iter-repeat_cut_preds_mf.tsv'
 TRAIN_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/train_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 TEST_PATH = 'data-bin/uniprotKB/cfpgen_general_dataset/test_all_old_motif_added_pfamMotif_esmfold_pfamEmb.pkl'
 GO_MAPPING_PATH = 'go_mapping.pkl'
@@ -159,6 +161,8 @@ for raw_id, group in tqdm(instance_groups, desc="Propagating"):
         all_pred_propagated.append(pred_prop)
         all_raw_ids.append(raw_id)
         all_pids.append(pid)
+    
+    
 
 # 2. Intersection Filter (The "Official" Logic)
 # Calculate Unique GOs across ALL valid samples
