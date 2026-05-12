@@ -14,15 +14,15 @@ data_f1 = [0.174, 0.330]
 data_match = [5.540, 43.20]
 
 # ================= 2. 绘图风格设置 (ICML Standard) =================
-# 使用 Seaborn 的 paper 上下文，字体稍微调大一点以保证清晰度
-sns.set_theme(style="whitegrid", context="paper", font_scale=1.4)
+text_scale = 1.1
+sns.set_theme(style="whitegrid", context="paper", font_scale=1.5 * text_scale)
 plt.rcParams['font.family'] = 'serif'
 # plt.rcParams['font.serif'] = ['Times New Roman']
 
 # 配色：Baseline (蓝色), Ours (红色/深红) - 保持一致性
 colors = ["#4c72b0", "#c44e52"]
 
-fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+fig, axes = plt.subplots(1, 2, figsize=(14, 4.2))
 
 # ================= 3. 辅助绘图函数 =================
 def plot_bars(ax, data, title, ylabel):
@@ -33,10 +33,11 @@ def plot_bars(ax, data, title, ylabel):
     rects = ax.bar(x, data, width, color=colors, alpha=0.9, edgecolor='black', linewidth=0.8)
     
     # 设置标题和标签
-    ax.set_title(title, fontsize=16, weight='bold', pad=15)
-    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=int(round(20 * text_scale)), weight='bold', pad=int(round(15 * text_scale)))
+    ax.set_ylabel(ylabel, fontsize=int(round(20 * text_scale)))
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=14)
+    ax.set_xticklabels(labels, fontsize=int(round(18 * text_scale)))
+    ax.tick_params(axis='y', labelsize=int(round(18 * text_scale)))
     
     # 动态调整 Y 轴范围，留出顶部空间给数字标签
     # 对于 Match Rate 图，由于 Baseline 特别小，需要确保它可见且上方有空间
@@ -49,6 +50,8 @@ def plot_bars(ax, data, title, ylabel):
     ax.grid(axis='y', linestyle='--', alpha=0.5)
     # ax.grid(axis='x', visible=False) # 不显示X轴网格
 
+    value_fontsize = int(round(16 * text_scale))
+
     if title=="Partial Match Rate":
 
         # 添加数值标签 (使用4位小数以精确显示小数值)
@@ -58,7 +61,7 @@ def plot_bars(ax, data, title, ylabel):
                         xy=(rect.get_x() + rect.get_width() / 2, height),
                         xytext=(0, 5),  # 垂直偏移 5 points
                         textcoords="offset points",
-                        ha='center', va='bottom', fontsize=13, weight='bold', color='black')
+                        ha='center', va='bottom', fontsize=value_fontsize, weight='bold', color='black')
     else:
 
         for rect in rects:
@@ -67,7 +70,7 @@ def plot_bars(ax, data, title, ylabel):
                         xy=(rect.get_x() + rect.get_width() / 2, height),
                         xytext=(0, 5),  # 垂直偏移 5 points
                         textcoords="offset points",
-                        ha='center', va='bottom', fontsize=13, weight='bold', color='black')
+                        ha='center', va='bottom', fontsize=value_fontsize, weight='bold', color='black')
 # ================= 4. 绘制子图 =================
 
 # Subplot 1: F1 Score
@@ -86,10 +89,10 @@ plot_bars(axes[1], data_match,
 # fig.suptitle("Performance on Hypothetical Functional Combinations (Non-Natural Sets)", 
 #              fontsize=18, weight='bold', y=1.05)
 
-plt.tight_layout()
+plt.tight_layout(pad=0.6, w_pad=1.0)
 
 # 保存图片
-filename = "non_natural_combinations_performance.png"
+filename = "non_natural_combinations_performance_large.png"
 plt.savefig(filename, dpi=300, bbox_inches='tight')
 print(f"Plot saved as {filename}")
 

@@ -171,6 +171,7 @@ run/logs
 *.json
 *.a3m
 *.gz
+*.pdf
 
 evaluat_fasta/*
 deepgo2/

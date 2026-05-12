@@ -426,28 +426,16 @@ def main():
 
 
 ## ================= 6. 可视化：分布小提琴图 (Violin Plots) =================
-    print("\nGenerating Distribution Violin Plots (Bold & Tall Style)...")
+    print("\nGenerating Distribution Violin Plots...")
     
-    # --- 1. 强化绘图配置 (字体加粗，字号加大) ---
-    sns.set_theme(style="whitegrid", context="paper", font_scale=2)
-    
-    plt.rcParams.update({
-        'font.family': 'serif',
-        'font.weight': 'bold',         # 全局字体加粗
-        'axes.labelweight': 'bold',    # 轴标签加粗
-        'axes.titleweight': 'bold',    # 标题加粗
-        'axes.titlesize': 20,          # 标题字号
-        'axes.labelsize': 18,          # 标签字号
-        'xtick.labelsize': 18,         # x轴刻度字号
-        'ytick.labelsize': 18,         # y轴刻度字号
-        'legend.fontsize': 18,
-    })
+    text_scale = 1.35
+    sns.set_theme(style="whitegrid", context="paper", font_scale=2 * text_scale)
+    plt.rcParams['font.family'] = 'serif'
     
     # 颜色方案
     custom_palette = ["#4c72b0", "#dd8452", "#c44e52"] 
     x_order = ['Exact Match', 'Partial Match', 'Fail']
     
-    # --- 2. 创建画布 (调高图片高度: figsize 从 (18,6) 改为 (18, 8)) ---
     fig, axes = plt.subplots(1, 3, figsize=(18, 8)) 
     
     plot_configs = [
@@ -459,7 +447,6 @@ def main():
     for ax, (col, title, ylabel) in zip(axes, plot_configs):
         plot_data = df_res.dropna(subset=[col])
         
-        # 3. 绘制小提琴图
         sns.violinplot(
             data=plot_data, 
             x='match_status', 
@@ -467,34 +454,36 @@ def main():
             ax=ax, 
             order=x_order, 
             palette=custom_palette, 
-            linewidth=2.5,  # 线条加粗
+            linewidth=1.0,
             cut=0 
         )
 
-        # 设置 y 轴限位（根据你的数据分布可微调）
-        if col == 'GT_Intra_Dist' or col == 'Pred_Intra_Dist':
+        if col == 'GT_Intra_Dist':
             ax.set_ylim(0, 10)
+        elif col == 'Pred_Intra_Dist':
+            ax.set_ylim(1, 6)
+        elif col == 'Avg_Depth':
+            ymin = float(np.floor(plot_data[col].min()))
+            ymax = float(np.ceil(plot_data[col].max()))
+            if ymin == ymax:
+                ax.set_ylim(ymin - 1, ymax + 1)
+                ax.set_yticks([ymin - 1, ymin, ymax, ymax + 1])
+            else:
+                step = 1 if (ymax - ymin) <= 10 else 2
+                ax.set_ylim(ymin, ymax)
+                ax.set_yticks(np.arange(ymin, ymax + step, step))
 
-        # 4. 细节美化
-        ax.set_title(title, pad=20)
+        ax.set_title(title, fontsize=int(round(20 * text_scale)), weight='bold', pad=int(round(15 * text_scale)))
         ax.set_xlabel('') 
-        ax.set_ylabel(ylabel)
-        
-        # 加粗刻度线和边框
-        for spine in ax.spines.values():
-            spine.set_linewidth(2)
-        ax.tick_params(direction='out', length=6, width=2)
+        ax.set_ylabel(ylabel, fontsize=int(round(20 * text_scale)))
+        ax.tick_params(axis='both', labelsize=int(round(18 * text_scale)))
+        ax.set_xticklabels(['Exact\nMatch', 'Partial\nMatch', 'Fail'])
 
-        # 移除顶部和右侧边框
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-
-    # --- 5. 全局布局调整 ---
-    plt.tight_layout(pad=3.0)
+    plt.tight_layout()
     
     save_path = 'analysis_violin_distributions_bold_large.png'
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Bold & Tall Violin plots saved to '{save_path}'")
+    print(f"Violin plots saved to '{save_path}'")
     
     plt.show()
 

@@ -50,7 +50,7 @@ model:
     motif_max_len: 30
 
   lora:
-    lora: true
+    lora: false
     lora_rank: 16
     lora_dropout: 0.1
     lora_target_module: (esm.encoder.layer.[0-9]*.attention.(self.query|self.key|self.value|output.dense).*|esm.encoder.layer.[0-9]*.(intermediate|output).dense.*)
