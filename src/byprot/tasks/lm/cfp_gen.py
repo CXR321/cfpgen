@@ -301,6 +301,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.eval_original_loss = MeanMetric()
         self.eval_attn_loss = MeanMetric()
         self.eval_contrast_loss = MeanMetric()
+        self.eval_motif_head_loss = MeanMetric()
 
         self.val_ppl_best = MinMetric()
         
@@ -381,6 +382,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.eval_original_loss.update(logging_output.get('original_loss', 0), weight=sample_size)
         self.eval_attn_loss.update(logging_output.get('attn_loss', 0), weight=sample_size)
         self.eval_contrast_loss.update(logging_output.get('contrast_loss', 0), weight=sample_size)
+        self.eval_motif_head_loss.update(logging_output.get('motif_head_loss', 0), weight=sample_size)
 
         return {"loss": loss}
 
@@ -400,6 +402,8 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.eval_attn_loss.reset()
         eval_contrast_loss = self.eval_contrast_loss.compute()
         self.eval_contrast_loss.reset()
+        eval_motif_head_loss = self.eval_motif_head_loss.compute()
+        self.eval_motif_head_loss.reset()
 
         self.log(f"{log_key}/loss", eval_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/nll_loss", eval_nll_loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -407,6 +411,7 @@ class CFPGENTrainingTaskDPLM2(TaskLitModule):
         self.log(f"{log_key}/original_loss", eval_original_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/attn_loss", eval_attn_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log(f"{log_key}/contrast_loss", eval_contrast_loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(f"{log_key}/motif_head_loss", eval_motif_head_loss, on_step=False, on_epoch=True, prog_bar=True)
 
         if self.stage == 'fit':
             self.val_ppl_best.update(eval_ppl)

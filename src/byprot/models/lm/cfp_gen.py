@@ -98,6 +98,18 @@ class CFPGENConfig_DPLM2:
 
     use_only_struct: bool = field(default=False)
 
+    use_go_dag_condition: bool = field(default=False)
+    go_dag_ontology_path: str = field(default="go-basic.obo")
+    go_dag_mapping_path: str = field(default="go_mapping.pkl")
+    go_dag_expanded_mapping_path: str = field(default="go_mapping_expanded.pkl")
+    go_dag_root: str = field(default="GO:0003674")
+    go_dag_skip_root: bool = field(default=True)
+    go_dag_max_ancestors: int = field(default=12)
+    go_dag_tau: float = field(default=0.12)
+    go_dag_prior_scale: float = field(default=1.0)
+    go_dag_learned_scale: float = field(default=0.1)
+    go_dag_use_leaf_embed: bool = field(default=True)
+
 
 @register_model('cfp_gen')
 class CondDiffusionProteinLanguageModel(nn.Module):
@@ -760,8 +772,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         self.use_motif_head = getattr(self.cfg, 'use_motif_head', False)
         if self.use_motif_head:
+            self.motif_label_num = int(self.cfg.cond.go_num)
             self.motif_head = MotifLabelHead(
-                1280, self.cfg.cond.go_num
+                1280, self.motif_label_num
             )
             self._init_weights(self.motif_head)
             
@@ -772,6 +785,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         self.use_static_scale = getattr(self.cfg, 'use_static_scale', False)
 
         self.use_attention_store = getattr(self.cfg, 'use_attention_store', False)
+        self.use_go_dag_condition = getattr(self.cfg, 'use_go_dag_condition', False)
+        if self.use_go_dag_condition:
+            self.use_attention_store = False
         # self.use_go_null_token = getattr(self.cfg, 'use_go_null_token', False) # ???
         self.use_motif_head = getattr(self.cfg, 'use_motif_head', False)
 
@@ -1015,7 +1031,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             inputs_embeds=input_embeds,
             attention_mask=attention_bias,
             type_ids=type_ids,
-            go_type_mask=input_ids['go_type_mask'],
+            go_type_mask=input_ids.get('go_type_mask', None),
         )
 
 
@@ -1315,7 +1331,22 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             motif_struct_emb = batch['motif_struct_emb']
             # print(motif_struct_emb)
 
-        inputs = dict(x_t=x_t, seq_cond=masked_target, go=batch['go_type'], ipr=batch['ipr_type'], ec=batch['ec_type'], motif_struct_emb=motif_struct_emb, go_type_mask=batch.get('go_type_mask', None))
+        cond_t = torch.maximum(struct_noised["t"], aatype_noised["t"])
+        if batch.get("struct_ignore") is not None:
+            cond_t = torch.where(batch["struct_ignore"], aatype_noised["t"], cond_t)
+        if self.use_only_struct:
+            cond_t = struct_noised["t"]
+
+        inputs = dict(
+            x_t=x_t,
+            seq_cond=masked_target,
+            go=batch['go_type'],
+            ipr=batch['ipr_type'],
+            ec=batch['ec_type'],
+            motif_struct_emb=motif_struct_emb,
+            go_type_mask=batch.get('go_type_mask', None),
+            cond_t=cond_t,
+        )
 
         # if batch.get("struct_ignore") is not None:
         #    temp = batch['struct_ignore']
@@ -1545,7 +1576,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
 
         return output_tokens, output_scores
 
-    def resample_conditional(self, _tokens, _scores, ratio, scale, go=None, ipr=None, seq_cond=None, ec=None, motif_struct_emb=None, **kwargs):
+    def resample_conditional(self, _tokens, _scores, ratio, scale, go=None, ipr=None, seq_cond=None, ec=None, motif_struct_emb=None, cond_t=None, **kwargs):
         to_be_resample_idx = []
         resample_input = []
         resample_input_mask = []
@@ -1604,10 +1635,25 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             if seq_cond is not None:
                 raise NotImplementedError
                 resample_input_seq_cond = torch.stack(resample_input_seq_cond, dim=0).type_as(_tokens)
+
+            def select_resample_condition(cond):
+                if (
+                    cond is not None
+                    and torch.is_tensor(cond)
+                    and cond.dim() > 1
+                    and cond.size(0) == _tokens.size(0)
+                ):
+                    return cond[to_be_resample_idx]
+                return cond
+
+            resample_go = select_resample_condition(go)
+            resample_ipr = select_resample_condition(ipr)
+            resample_ec = select_resample_condition(ec)
+            resample_cond_t = cond_t[to_be_resample_idx] if cond_t is not None else None
             if motif_struct_emb is not None:
-                inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec, motif_struct_emb=motif_struct_emb[to_be_resample_idx])
+                inputs = dict(x_t=resample_input, go=resample_go, ipr=resample_ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=resample_ec, motif_struct_emb=motif_struct_emb[to_be_resample_idx], cond_t=resample_cond_t)
             else:
-                inputs = dict(x_t=resample_input, go=go, ipr=ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=ec, motif_struct_emb=None)
+                inputs = dict(x_t=resample_input, go=resample_go, ipr=resample_ipr, seq_cond=resample_input_seq_cond if seq_cond is not None else None, ec=resample_ec, motif_struct_emb=None, cond_t=resample_cond_t)
             type_ids = self.get_modality_type(_tokens)
             
             resample_logits = self.net(
@@ -1638,6 +1684,16 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             resample_input.masked_scatter_(resample_input_mask, resample_tokens[resample_input_mask])
             resample_input_scores.masked_scatter_(resample_input_mask, resample_scores[resample_input_mask])
             _tokens[to_be_resample_idx], _scores[to_be_resample_idx] = resample_input, resample_input_scores
+
+    def get_generation_cond_t(self, output_tokens, step, max_step):
+        remaining_noise = 1.0 - float(step) / max(float(max_step), 1.0)
+        cond_t_value = max(1, int(round(self.cfg.num_diffusion_timesteps * remaining_noise)))
+        return torch.full(
+            (output_tokens.size(0),),
+            cond_t_value,
+            device=output_tokens.device,
+            dtype=torch.long,
+        )
             
     def forward_decoder(self, prev_decoder_out, need_attn_weights=False, partial_masks=None,
                         sampling_strategy='gumbel_argmax', go_label=None, ipr_label=None, seq_cond=None, ec_label=None, motif_struct_emb=None):
@@ -1648,8 +1704,9 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
         history = prev_decoder_out['history']
 
         output_masks = self.get_non_special_symbol_mask(output_tokens, partial_masks=partial_masks)
+        cond_t = self.get_generation_cond_t(output_tokens, step, max_step)
 
-        inputs = dict(x_t=output_tokens, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
+        inputs = dict(x_t=output_tokens, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb, cond_t=cond_t)
 
         input_mask = output_tokens.ne(self.pad_id)
         L = output_tokens.shape[1]
@@ -1725,7 +1782,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 logits, temperature=0.0, noise_scale=noise_scale
             )
 
-            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb, cond_t=cond_t)
 
             _tokens.masked_scatter_(
                 ~output_masks, output_tokens[~output_masks]
@@ -1742,7 +1799,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 logits, temperature=temperature
             )
 
-            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb)
+            self.resample_conditional(_tokens, _scores, ratio=0.25, scale=1.0, go=go_label, ipr=ipr_label, seq_cond=seq_cond, ec=ec_label, motif_struct_emb=motif_struct_emb, cond_t=cond_t)
         else:
             _tokens, _scores = sample_from_categorical(
                 logits, temperature=temperature
@@ -1786,6 +1843,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             output_tokens, partial_masks=partial_masks
         )
         type_ids = self.get_modality_type(output_tokens)
+        cond_t = self.get_generation_cond_t(output_tokens, step, max_step)
 
         input_mask = output_tokens.ne(self.pad_id)
         L = output_tokens.shape[1]
@@ -1803,6 +1861,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             seq_cond=seq_cond,
             ec=ec_label,
             motif_struct_emb=motif_struct_emb,
+            cond_t=cond_t,
         )
         uncond_inputs = dict(
             x_t=output_tokens,
@@ -1813,6 +1872,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
             motif_struct_emb=torch.zeros_like(motif_struct_emb)
             if motif_struct_emb is not None
             else None,
+            cond_t=cond_t,
         )
 
         cond_out = self.net(
@@ -1857,6 +1917,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 seq_cond=seq_cond,
                 ec=ec_label,
                 motif_struct_emb=motif_struct_emb,
+                cond_t=cond_t,
             )
             _tokens.masked_scatter_(~output_masks, output_tokens[~output_masks])
         elif sampling_strategy.startswith("annealing"):
@@ -1876,6 +1937,7 @@ class CondDiffusionProteinLanguageModel2(nn.Module):
                 seq_cond=seq_cond,
                 ec=ec_label,
                 motif_struct_emb=motif_struct_emb,
+                cond_t=cond_t,
             )
         else:
             _tokens, _scores = sample_from_categorical(logits, temperature=temperature)

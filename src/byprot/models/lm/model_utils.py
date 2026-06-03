@@ -131,10 +131,29 @@ def get_net(cfg):
             config.use_motif_head = getattr(cfg, "use_motif_head", False)
 
             config.use_only_struct = getattr(cfg, "use_only_struct", False)
+            config.num_diffusion_timesteps = getattr(cfg, "num_diffusion_timesteps", 500)
+            config.use_go_dag_condition = getattr(cfg, "use_go_dag_condition", False)
+            config.go_dag_ontology_path = getattr(cfg, "go_dag_ontology_path", "go-basic.obo")
+            config.go_dag_mapping_path = getattr(cfg, "go_dag_mapping_path", "go_mapping.pkl")
+            config.go_dag_expanded_mapping_path = getattr(
+                cfg, "go_dag_expanded_mapping_path", "go_mapping_expanded.pkl"
+            )
+            config.go_dag_root = getattr(cfg, "go_dag_root", "GO:0003674")
+            config.go_dag_skip_root = getattr(cfg, "go_dag_skip_root", True)
+            config.go_dag_max_ancestors = getattr(cfg, "go_dag_max_ancestors", 12)
+            config.go_dag_tau = getattr(cfg, "go_dag_tau", 0.12)
+            config.go_dag_prior_scale = getattr(cfg, "go_dag_prior_scale", 1.0)
+            config.go_dag_learned_scale = getattr(cfg, "go_dag_learned_scale", 0.1)
+            config.go_dag_use_leaf_embed = getattr(cfg, "go_dag_use_leaf_embed", True)
 
             # print(f"config: {config}")
             if 'cond' in cfg:
                 config.update(cfg.cond)
+            if config.use_go_dag_condition:
+                config.use_ipr = False
+                config.use_ec = False
+                config.use_attention_store = False
+                config.use_seq_motif = False
 
             pretrained_net = (
                 MultimodalDiffusionProteinLanguageModel.from_pretrained(

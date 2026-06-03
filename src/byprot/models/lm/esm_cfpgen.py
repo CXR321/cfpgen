@@ -18,6 +18,9 @@ from transformers import AutoConfig, AutoModelForMaskedLM, AutoTokenizer
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from copy import deepcopy
 import random
+import os
+import pickle
+import warnings
 from typing import Dict, List, Optional
 
 class ModifiedRotaryEmbedding(RotaryEmbedding):
@@ -907,12 +910,17 @@ class AGFMLayerDPLM2(nn.Module):
     ):
 
         if cond_input is not None:
+            cond_mod_input = cond_input
+            if cond_input.dim() == 3:
+                if go_type_mask is not None and go_type_mask.shape[:2] == cond_input.shape[:2]:
+                    cond_mask = go_type_mask.to(cond_input.dtype).unsqueeze(-1)
+                    cond_mod_input = torch.sum(cond_input * cond_mask, dim=1)
+                else:
+                    cond_mod_input = torch.sum(cond_input, dim=1)
+
             if self.use_diff_modulation:
 
-                if self.use_attention_store:
-                    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input.sum(dim=1)).chunk(12, dim=1)
-                else:
-                    shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_input).chunk(12, dim=1)
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp, shift_msa_seq, scale_msa_seq, gate_msa_seq, shift_mlp_seq, scale_mlp_seq, gate_mlp_seq = self.adaLN_modulation(cond_mod_input).chunk(12, dim=1)
 
                 shift_msa = [shift_msa, shift_msa_seq]
                 scale_msa = [scale_msa, scale_msa_seq]
@@ -921,7 +929,7 @@ class AGFMLayerDPLM2(nn.Module):
                 scale_mlp = [scale_mlp, scale_mlp_seq]
                 gate_mlp = [gate_mlp, gate_mlp_seq]
             else:
-                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(cond_input).chunk(6, dim=1)
+                shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(cond_mod_input).chunk(6, dim=1)
 
         else:
             shift_msa = scale_msa = shift_mlp = scale_mlp = gate_msa = gate_mlp = None
@@ -958,27 +966,47 @@ class AGFMLayerDPLM2(nn.Module):
 
                 # 预归一化 + CrossAttn
                 q = self.cross_attn_ln(attention_output)           # [B, L, D]
+                func_mask = None
+                if (
+                    cond_input.dim() == 3
+                    and go_type_mask is not None
+                    and go_type_mask.shape[:2] == func_tok.shape[:2]
+                ):
+                    func_mask = go_type_mask.bool()
 
-                # for multi-head attention
-                # cross_out, cross_w = self.cross_attn(
-                #     query=q, key=func_tok, value=func_tok,
-                #     attn_mask=None, key_padding_mask=~go_type_mask,
-                #     need_weights=True,
-                # )  # cross_out: [B, L, D]
-                cross_out, cross_w = self.cross_attn(
-                    query=q, key=func_tok, value=func_tok,
-                    attn_mask=None, key_padding_mask=None,
-                    need_weights=True,
-                )  # cross_out: [B, L, D]
-                # cross_out, cross_w = self.cross_attn(
-                #     query_input=q, key_input=func_tok, value_input=func_tok
-                # )  # cross_out: [B, L, D]
-
-
-                # cross_out, cross_w = self.cross_attn(
-                #     query=q, key=func_tok, value=func_tok,
-                #     attn_mask=None, key_padding_mask=go_type_mask
-                # )  # cross_out: [B, L, D]
+                if func_mask is None:
+                    cross_out, cross_w = self.cross_attn(
+                        query=q, key=func_tok, value=func_tok,
+                        attn_mask=None, key_padding_mask=None,
+                        need_weights=output_attentions,
+                    )  # cross_out: [B, L, D]
+                else:
+                    valid_rows = func_mask.any(dim=1)
+                    if valid_rows.any():
+                        valid_out, valid_w = self.cross_attn(
+                            query=q[valid_rows],
+                            key=func_tok[valid_rows],
+                            value=func_tok[valid_rows],
+                            attn_mask=None,
+                            key_padding_mask=~func_mask[valid_rows],
+                            need_weights=output_attentions,
+                        )
+                        cross_out = valid_out.new_zeros(q.shape)
+                        cross_out[valid_rows] = valid_out
+                        if output_attentions and valid_w is not None:
+                            cross_w = valid_w.new_zeros(
+                                q.size(0), q.size(1), func_tok.size(1)
+                            )
+                            cross_w[valid_rows] = valid_w
+                        else:
+                            cross_w = None
+                    else:
+                        cross_out = q.new_zeros(q.shape)
+                        cross_w = (
+                            q.new_zeros(q.size(0), q.size(1), func_tok.size(1))
+                            if output_attentions
+                            else None
+                        )
 
                 # 残差 + 门控（AA/Struct 差异化）
                 # attention_output = attention_output + self.cross_res_scale * cross_out
@@ -1158,6 +1186,342 @@ class FuncTagEmbedder(nn.Module):
     def forward(self, labels):
         embeddings = self.embedding_table(labels)
         return embeddings
+
+
+class GODAGConditioner(nn.Module):
+    """
+    Time-coupled GO-DAG conditioner.
+
+    The original GO mapping is expanded in-place conceptually: observed GO
+    labels keep their ids, missing ancestors receive new ids, and all GO terms
+    share one embedding table.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.original_go_num = int(config.go_num)
+        self.hidden_size = int(config.hidden_size)
+        self.num_timesteps = int(getattr(config, "num_diffusion_timesteps", 500))
+        self.max_ancestors = int(getattr(config, "go_dag_max_ancestors", 12))
+        self.root_term = getattr(config, "go_dag_root", "GO:0003674")
+        self.skip_root = bool(getattr(config, "go_dag_skip_root", True))
+        self.use_leaf_embed = bool(getattr(config, "go_dag_use_leaf_embed", True))
+
+        expanded_term_to_id, ancestor_ids, ancestor_depths, ancestor_valid, ancestor_is_leaf, leaf_depths = (
+            self._build_ontology_buffers(config)
+        )
+        self.expanded_term_to_id = expanded_term_to_id
+        self.expanded_id_to_term = {idx: term for term, idx in expanded_term_to_id.items()}
+        self.expanded_go_num = len(expanded_term_to_id)
+
+        tau = float(getattr(config, "go_dag_tau", 0.12))
+        self.log_tau = nn.Parameter(torch.tensor(tau).log())
+        self.prior_scale = nn.Parameter(
+            torch.tensor(float(getattr(config, "go_dag_prior_scale", 1.0)))
+        )
+        self.learned_scale = nn.Parameter(
+            torch.tensor(float(getattr(config, "go_dag_learned_scale", 0.1)))
+        )
+        self.weight_mlp = nn.Sequential(
+            nn.Linear(5, 32),
+            nn.SiLU(),
+            nn.Linear(32, 1),
+        )
+        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size)
+
+        self.register_buffer("ancestor_ids", ancestor_ids, persistent=False)
+        self.register_buffer("ancestor_depths", ancestor_depths, persistent=False)
+        self.register_buffer("ancestor_valid", ancestor_valid, persistent=False)
+        self.register_buffer("ancestor_is_leaf", ancestor_is_leaf, persistent=False)
+        self.register_buffer("leaf_depths", leaf_depths, persistent=False)
+
+        self.apply(_init_module_weights)
+
+    def _build_ontology_buffers(self, config):
+        mapping_path = getattr(config, "go_dag_mapping_path", "go_mapping.pkl")
+        expanded_mapping_path = getattr(
+            config, "go_dag_expanded_mapping_path", "go_mapping_expanded.pkl"
+        )
+        ontology_path = getattr(config, "go_dag_ontology_path", "go-basic.obo")
+        mapping_path = self._resolve_path(mapping_path)
+        expanded_mapping_path = self._resolve_path(expanded_mapping_path)
+        ontology_path = self._resolve_path(ontology_path)
+
+        term_to_id = {}
+        id_to_term = {}
+        if mapping_path and os.path.exists(mapping_path):
+            with open(mapping_path, "rb") as handle:
+                term_to_id = pickle.load(handle)
+            id_to_term = {idx: term for term, idx in term_to_id.items()}
+        else:
+            warnings.warn(
+                f"GO-DAG mapping file not found: {mapping_path}. Falling back to identity GO nodes."
+            )
+
+        parents = {}
+        depths = {}
+        if ontology_path and os.path.exists(ontology_path):
+            try:
+                parents, depths = self._load_ontology_dag(ontology_path)
+            except Exception as exc:
+                warnings.warn(f"Failed to load GO ontology from {ontology_path}: {exc}")
+        else:
+            warnings.warn(
+                f"GO ontology file not found: {ontology_path}. Falling back to identity GO nodes."
+            )
+
+        per_go_terms = []
+        expanded_term_to_id = dict(term_to_id)
+        next_go_id = max(expanded_term_to_id.values(), default=-1) + 1
+        depth_cache = {}
+
+        def depth(term):
+            if term in depth_cache:
+                return depth_cache[term]
+            value = float(depths.get(term, 1.0))
+            depth_cache[term] = value
+            return value
+
+        ancestor_cache = {}
+        for go_idx in range(self.original_go_num):
+            leaf = id_to_term.get(go_idx, f"LOCAL_GO:{go_idx}")
+            if leaf not in expanded_term_to_id:
+                expanded_term_to_id[leaf] = go_idx
+                next_go_id = max(next_go_id, go_idx + 1)
+            if leaf in parents:
+                terms = list(self._get_ancestors(leaf, parents, ancestor_cache))
+            else:
+                terms = [leaf]
+            if leaf not in terms:
+                terms.append(leaf)
+            if self.skip_root:
+                terms = [term for term in terms if term != self.root_term]
+                if not terms:
+                    terms = [leaf]
+            terms = sorted(set(terms), key=lambda term: (depth(term), term))
+            terms = self._select_ancestor_terms(terms, leaf)
+            per_go_terms.append((leaf, terms))
+            for term in terms:
+                if term not in expanded_term_to_id:
+                    expanded_term_to_id[term] = next_go_id
+                    next_go_id += 1
+
+        if expanded_mapping_path:
+            self._save_expanded_mapping(expanded_mapping_path, expanded_term_to_id)
+
+        ancestor_ids = torch.zeros(self.original_go_num, self.max_ancestors, dtype=torch.long)
+        ancestor_depths = torch.zeros(self.original_go_num, self.max_ancestors, dtype=torch.float)
+        ancestor_valid = torch.zeros(self.original_go_num, self.max_ancestors, dtype=torch.bool)
+        ancestor_is_leaf = torch.zeros(self.original_go_num, self.max_ancestors, dtype=torch.float)
+        leaf_depths = torch.ones(self.original_go_num, dtype=torch.float)
+
+        for go_idx, (leaf, terms) in enumerate(per_go_terms):
+            leaf_depth = max(depth(leaf), 1.0)
+            leaf_depths[go_idx] = leaf_depth
+            for anc_idx, term in enumerate(terms[: self.max_ancestors]):
+                ancestor_ids[go_idx, anc_idx] = expanded_term_to_id[term]
+                ancestor_depths[go_idx, anc_idx] = depth(term)
+                ancestor_valid[go_idx, anc_idx] = True
+                ancestor_is_leaf[go_idx, anc_idx] = float(term == leaf)
+
+        return expanded_term_to_id, ancestor_ids, ancestor_depths, ancestor_valid, ancestor_is_leaf, leaf_depths
+
+    def _save_expanded_mapping(self, path, expanded_term_to_id):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        existing = None
+        if os.path.exists(path):
+            try:
+                with open(path, "rb") as handle:
+                    existing = pickle.load(handle)
+            except Exception:
+                existing = None
+        if existing != expanded_term_to_id:
+            with open(path, "wb") as handle:
+                pickle.dump(expanded_term_to_id, handle)
+
+    def _load_ontology_dag(self, ontology_path):
+        parents = {}
+        obsolete = set()
+        current = None
+
+        def flush(term):
+            if term is None or "id" not in term:
+                return
+            term_id = term["id"]
+            if term.get("is_obsolete", False):
+                obsolete.add(term_id)
+                return
+            parents[term_id] = term.get("parents", [])
+            for alt_id in term.get("alt_ids", []):
+                parents[alt_id] = term.get("parents", [])
+
+        with open(ontology_path, "r") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line == "[Term]":
+                    flush(current)
+                    current = {"parents": [], "alt_ids": [], "is_obsolete": False}
+                    continue
+                if line == "[Typedef]":
+                    flush(current)
+                    current = None
+                    continue
+                if current is None:
+                    continue
+                if line.startswith("id: "):
+                    current["id"] = line.split("id: ", 1)[1]
+                elif line.startswith("alt_id: "):
+                    current["alt_ids"].append(line.split("alt_id: ", 1)[1])
+                elif line.startswith("is_a: "):
+                    current["parents"].append(line.split("is_a: ", 1)[1].split(" ! ", 1)[0])
+                elif line == "is_obsolete: true":
+                    current["is_obsolete"] = True
+            flush(current)
+
+        for term_id in list(parents.keys()):
+            if term_id in obsolete:
+                parents.pop(term_id, None)
+                continue
+            parents[term_id] = [parent for parent in parents[term_id] if parent in parents]
+
+        children = {term: [] for term in parents}
+        for term, term_parents in parents.items():
+            for parent in term_parents:
+                children[parent].append(term)
+
+        depths = {self.root_term: 0.0}
+        queue = [self.root_term]
+        for term in queue:
+            for child in children.get(term, []):
+                child_depth = depths[term] + 1.0
+                if child not in depths or child_depth < depths[child]:
+                    depths[child] = child_depth
+                    queue.append(child)
+
+        return parents, depths
+
+    def _get_ancestors(self, term, parents, cache):
+        if term in cache:
+            return cache[term]
+        ancestors = {term}
+        for parent in parents.get(term, []):
+            ancestors.update(self._get_ancestors(parent, parents, cache))
+        cache[term] = ancestors
+        return ancestors
+
+    def _resolve_path(self, path):
+        if path is None:
+            return None
+        if os.path.isabs(path):
+            return path
+
+        candidates = []
+        repo_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+        )
+        candidates.append(os.path.join(repo_root, path))
+        try:
+            from hydra.utils import get_original_cwd
+
+            candidates.append(os.path.abspath(os.path.join(get_original_cwd(), path)))
+        except Exception:
+            pass
+
+        env_pwd = os.environ.get("PWD")
+        if env_pwd:
+            candidates.append(os.path.abspath(os.path.join(env_pwd, path)))
+        candidates.append(os.path.abspath(path))
+
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return candidates[0]
+
+    def _select_ancestor_terms(self, terms, leaf):
+        if len(terms) <= self.max_ancestors:
+            return terms
+        if self.max_ancestors <= 1:
+            return [leaf]
+        last = len(terms) - 1
+        selected = []
+        for pos in range(self.max_ancestors):
+            idx = round(pos * last / (self.max_ancestors - 1))
+            selected.append(terms[idx])
+        if leaf not in selected:
+            selected[-1] = leaf
+        deduped = []
+        for term in selected:
+            if term not in deduped:
+                deduped.append(term)
+        while len(deduped) < self.max_ancestors and leaf not in deduped:
+            deduped.append(leaf)
+        return deduped[: self.max_ancestors]
+
+    def forward(self, class_tensor, cond_t=None, leaf_embedder=None, valid_mask=None):
+        bsz, cond_len = class_tensor.shape
+        if valid_mask is None:
+            valid_mask = (class_tensor >= 0) & (class_tensor < self.original_go_num)
+        else:
+            valid_mask = valid_mask & (class_tensor >= 0) & (class_tensor < self.original_go_num)
+
+        safe_ids = torch.where(valid_mask, class_tensor, torch.zeros_like(class_tensor))
+        safe_ids = safe_ids.clamp(min=0, max=self.original_go_num - 1)
+
+        if cond_t is None:
+            noise = torch.zeros(bsz, device=class_tensor.device, dtype=torch.float)
+        else:
+            if cond_t.dim() > 1:
+                cond_t = cond_t.float().amax(dim=-1)
+            noise = cond_t.float().to(class_tensor.device) / max(self.num_timesteps, 1)
+            noise = noise.clamp(0.0, 1.0)
+
+        ancestor_ids = self.ancestor_ids[safe_ids]
+        ancestor_depths = self.ancestor_depths[safe_ids]
+        ancestor_valid = self.ancestor_valid[safe_ids]
+        ancestor_is_leaf = self.ancestor_is_leaf[safe_ids]
+        leaf_depths = self.leaf_depths[safe_ids].clamp_min(1.0)
+
+        depth_norm = (ancestor_depths / leaf_depths.unsqueeze(-1)).clamp(0.0, 1.0)
+        target_depth = (1.0 - noise).view(bsz, 1, 1).expand_as(depth_norm)
+        noise_feat = noise.view(bsz, 1, 1).expand_as(depth_norm)
+        tau = self.log_tau.exp().clamp(0.02, 1.0)
+
+        prior_logits = -torch.abs(depth_norm - target_depth) / tau
+        features = torch.stack(
+            [
+                depth_norm,
+                1.0 - depth_norm,
+                noise_feat,
+                target_depth,
+                ancestor_is_leaf,
+            ],
+            dim=-1,
+        )
+        learned_logits = self.weight_mlp(features).squeeze(-1)
+        logits = self.prior_scale * prior_logits + self.learned_scale * learned_logits
+        logits = logits.masked_fill(~ancestor_valid, -inf)
+
+        weights = torch.softmax(logits, dim=-1)
+        weights = torch.where(valid_mask.unsqueeze(-1), weights, torch.zeros_like(weights))
+
+        if leaf_embedder is None:
+            raise ValueError("GODAGConditioner requires the shared expanded GO embedder.")
+
+        ancestor_embeds = leaf_embedder(ancestor_ids)
+        tokens = torch.sum(ancestor_embeds * weights.unsqueeze(-1), dim=2)
+
+        if self.use_leaf_embed and leaf_embedder is not None:
+            null_id = torch.full_like(class_tensor, self.expanded_go_num)
+            leaf_ids = torch.where(valid_mask, class_tensor, null_id)
+            leaf_tokens = leaf_embedder(leaf_ids)
+            leaf_tokens = torch.where(valid_mask.unsqueeze(-1), leaf_tokens, torch.zeros_like(leaf_tokens))
+            leaf_gate = (1.0 - noise).view(bsz, 1, 1)
+            tokens = tokens + leaf_gate * leaf_tokens
+
+        tokens = self.out_proj(tokens)
+        tokens = torch.where(valid_mask.unsqueeze(-1), tokens, torch.zeros_like(tokens))
+        return tokens, valid_mask
 
 
 class CFPGenEncoder(EsmEncoder):
@@ -1387,12 +1751,23 @@ class CFPGenEncoderDPLM2(EsmEncoder):
         self.use_go, self.use_ipr, self.use_ec = config.use_go, config.use_ipr, config.use_ec
 
         self.use_go_null_token = config.use_go_null_token
+        self.use_go_dag_condition = bool(getattr(config, "use_go_dag_condition", False))
+        if self.use_go_dag_condition:
+            self.use_ipr = False
+            self.use_ec = False
 
         if self.use_go:
-            self.go_class_num = config.go_num
+            self.go_input_class_num = config.go_num
             self.go_cls_dropout_all = config.go_drop
             self.go_cls_dropout_each = 0.1
-            self.go_embedder = FuncTagEmbedder(config.go_num, config.hidden_size)
+            if self.use_go_dag_condition:
+                self.go_dag_conditioner = GODAGConditioner(config)
+                self.go_class_num = self.go_dag_conditioner.expanded_go_num
+                config.go_num_expanded = self.go_class_num
+                config.go_dag_expanded_term_to_id = self.go_dag_conditioner.expanded_term_to_id
+            else:
+                self.go_class_num = config.go_num
+            self.go_embedder = FuncTagEmbedder(self.go_class_num, config.hidden_size)
             self.go_embedder.apply(_init_module_weights)
             if self.use_go_null_token:
                 self.go_null_token = nn.Parameter(torch.zeros(config.hidden_size))
@@ -1415,15 +1790,8 @@ class CFPGenEncoderDPLM2(EsmEncoder):
 
         self.layer = nn.ModuleList([AGFMLayerDPLM2(deepcopy(config)) for _ in range(config.num_hidden_layers)])
 
-        # TODO: 初始化RCFE 
-        if config.use_seq_motif and False:
-            self.copy_blocks_num = config.num_hidden_layers//2
-            self.anno_dropout = 0.5
-            self.seq_controlnet = nn.ModuleList(
-                [RCFEBlock(AGFMLayerDPLM2(deepcopy(config)), i, config.hidden_size) for i in range(self.copy_blocks_num)]
-            )
-        else:
-            self.seq_controlnet = None
+        # RCFE is disabled for the current GO-only DPLM2 model.
+        self.seq_controlnet = None
 
     # old drop_anno_ids just add all anno_emb
     def drop_anno_ids_add(self, class_tensor, embedder, class_num, training, drop_all_prob, drop_each_prob):
@@ -1499,6 +1867,27 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             # stack(..., dim=1) 结果为 [B, Num_Tags, D]
             return torch.stack(class_embeds, dim=1)
 
+    def drop_anno_ids_go_dag(self, class_tensor, cond_t, training, drop_all_prob, drop_each_prob):
+        """
+        Drop GO IDs and encode each remaining GO as one dynamic DAG token.
+        """
+        if training:
+            drop_all = torch.rand(class_tensor.size(0), device=class_tensor.device) < drop_all_prob
+            full_replacement = torch.full_like(class_tensor, self.go_class_num)
+            class_tensor = torch.where(drop_all.unsqueeze(1), full_replacement, class_tensor)
+
+            drop_each = torch.rand_like(class_tensor, dtype=torch.float) < drop_each_prob
+            class_tensor = torch.where(drop_each, full_replacement, class_tensor)
+
+        valid_mask = (class_tensor >= 0) & (class_tensor < self.go_input_class_num)
+        go_embed, valid_mask = self.go_dag_conditioner(
+            class_tensor,
+            cond_t=cond_t,
+            leaf_embedder=self.go_embedder,
+            valid_mask=valid_mask,
+        )
+        return go_embed, valid_mask
+
 
     def forward(
             self,
@@ -1544,7 +1933,23 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                     cls = cls.unsqueeze(0).repeat(seq_num, 1)
                 return torch.where(cls == -1, torch.full_like(cls, class_num), cls)
 
-            if not self.config.use_attention_store:
+            if self.use_go_dag_condition:
+                cond_t = anno_tag.get("cond_t")
+                if self.use_go and go_class is not None:
+                    if hasattr(self.go_embedder, 'original_module'):
+                        num_classes = self.go_embedder.original_module.num_classes
+                    else:
+                        num_classes = self.go_embedder.num_classes
+                    go_class = prepare_class(go_class, num_classes)
+                    anno_embed, go_type_mask = self.drop_anno_ids_go_dag(
+                        go_class,
+                        cond_t=cond_t,
+                        training=self.training,
+                        drop_all_prob=self.go_cls_dropout_all,
+                        drop_each_prob=self.go_cls_dropout_each,
+                    )
+
+            elif not self.config.use_attention_store:
 
                 # old sum all anno_embed
                 if self.use_go and go_class is not None:
@@ -1631,7 +2036,9 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                 use_cache = False
         all_hidden_states = () if output_hidden_states else None
 
-        output_attentions = output_attentions or (self.config.use_attention_store)
+        output_attentions = output_attentions or (
+            self.config.use_attention_store and not self.use_go_dag_condition
+        )
 
         all_self_attentions = () if output_attentions else None
         all_cross_attentions = () if output_attentions and self.config.add_cross_attention else None

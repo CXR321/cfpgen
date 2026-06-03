@@ -1,5 +1,5 @@
-# export CUDA_VISIBLE_DEVICES=2,6,7,5
-export CUDA_VISIBLE_DEVICES=4,6
+export CUDA_VISIBLE_DEVICES=3,6,7,4
+# export CUDA_VISIBLE_DEVICES=4,6
 # export CUDA_VISIBLE_DEVICES=6,7
 # export CUDA_VISIBLE_DEVICES=1
 
@@ -29,8 +29,9 @@ exp=cfpgen/cfpgen_650m_stage1_dplm2
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_clloss-0.1_attnloss-0.1_sn-pnwandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_clloss-1.0-t0.05-cos1024_sn-pnwandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pn-lora-wandb
-model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pnwandb
+# model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_godag-dyncond_sn-pnwandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_struct_only
+model_name=codfp-dag_go
 
 # model_name=cfpgen_general_dataset_stage1_dplm2_motifonly_structmaskNone_pfamNone
 # model_name=debug
@@ -40,4 +41,4 @@ python train.py \
     experiment=${exp} \
     name=${model_name} \
     datamodule.max_tokens=${max_tokens} \
-    trainer.accumulate_grad_batches=${accumulate_grad_batches} 
+    trainer.accumulate_grad_batches=${accumulate_grad_batches}

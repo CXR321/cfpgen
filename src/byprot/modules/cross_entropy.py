@@ -589,6 +589,8 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
         # contrast loss
 
+        motif_head_loss = None
+
         if hidden_states['motif_labels_logits'] is None:
 
             if hidden_states is None:
@@ -780,12 +782,32 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
                 
                 device = logits.device
 
-                loss_weights = self.class_weights.to(device)
-
                 if len(labels) != 0:
-                    contrast_loss_mean = F.cross_entropy(logits, labels, weight=loss_weights) * self.scale
+                    num_motif_labels = logits.size(-1)
+                    invalid_labels = (labels < 0) | (labels >= num_motif_labels)
+                    if invalid_labels.any():
+                        bad_labels = labels[invalid_labels].detach().cpu().tolist()
+                        raise ValueError(
+                            "motif head labels must use the original GO id space "
+                            f"[0, {num_motif_labels}); got invalid labels {bad_labels[:10]}"
+                        )
+
+                    loss_weights = None
+                    if self.class_weights is not None:
+                        loss_weights = self.class_weights.to(device=device, dtype=logits.dtype)
+                        if loss_weights.numel() != num_motif_labels:
+                            if loss_weights.numel() > num_motif_labels:
+                                loss_weights = loss_weights[:num_motif_labels]
+                            else:
+                                raise ValueError(
+                                    "motif head class weights must match the original GO label count; "
+                                    f"got {loss_weights.numel()} weights for {num_motif_labels} labels"
+                                )
+
+                    motif_head_loss = F.cross_entropy(logits, labels, weight=loss_weights) * self.scale
+                    contrast_loss_mean = motif_head_loss
                     # 要平均吗？
-                    print(f"contrast_loss_mean: {contrast_loss_mean}")
+                    print(f"motif_head_loss: {motif_head_loss}")
 
 
         # dplm2 diffusion crossentropy loss start
@@ -883,6 +905,8 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
             if contrast_loss_mean is not None:
                 logging_output[f"contrast_loss"] = contrast_loss_mean.data
+                if motif_head_loss is not None:
+                    logging_output[f"motif_head_loss"] = motif_head_loss.data
                 loss += contrast_loss_mean
 
             if attn_loss is not None:
@@ -921,6 +945,8 @@ class ContrastMotifStructAARDMCrossEntropyLoss(nn.CrossEntropyLoss):
 
             if contrast_loss_mean is not None:
                 logging_output_dict["contrast_loss"] = contrast_loss_mean.data
+                if motif_head_loss is not None:
+                    logging_output_dict["motif_head_loss"] = motif_head_loss.data
                 losses += contrast_loss_mean
             if attn_loss is not None:
 
