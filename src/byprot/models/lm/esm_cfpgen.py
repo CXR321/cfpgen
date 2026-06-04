@@ -1524,6 +1524,619 @@ class GODAGConditioner(nn.Module):
         return tokens, valid_mask
 
 
+class GOPathPairConditioner(nn.Module):
+    """
+    Encodes every valid GO pair as a diffusion-coupled path token.
+
+    For two GO leaves, the path is the DAG geodesic that moves upward from the
+    left leaf to the best shared ancestor, then downward to the right leaf.
+    The path node embeddings are shared with the GO-DAG conditioner, which makes
+    unseen condition pairs compositional over ontology nodes already learned by
+    single-label conditioning.
+    """
+
+    def __init__(self, config, expanded_term_to_id=None):
+        super().__init__()
+        self.original_go_num = int(config.go_num)
+        self.hidden_size = int(config.hidden_size)
+        self.num_timesteps = int(getattr(config, "num_diffusion_timesteps", 500))
+        self.max_pairs = int(getattr(config, "go_pair_max_pairs", 24))
+        self.max_path_len = int(getattr(config, "go_pair_max_path_len", 12))
+        self.root_term = getattr(config, "go_dag_root", "GO:0003674")
+        self.skip_root = bool(getattr(config, "go_dag_skip_root", True))
+        self.drop_prob = float(getattr(config, "go_pair_drop", 0.1))
+        self.token_scale = float(getattr(config, "go_pair_token_scale", 0.35))
+
+        (
+            path_ids,
+            path_roles,
+            path_valid,
+            path_progress,
+            pair_features,
+            expanded_go_num,
+        ) = self._build_pair_path_buffers(config, expanded_term_to_id)
+        self.expanded_go_num = expanded_go_num
+
+        tau = float(getattr(config, "go_pair_tau", 0.18))
+        self.log_tau = nn.Parameter(torch.tensor(tau).log())
+        self.prior_scale = nn.Parameter(
+            torch.tensor(float(getattr(config, "go_pair_prior_scale", 1.0)))
+        )
+        self.learned_scale = nn.Parameter(
+            torch.tensor(float(getattr(config, "go_pair_learned_scale", 0.1)))
+        )
+
+        self.role_embedder = nn.Embedding(4, self.hidden_size, padding_idx=0)
+        self.position_embedder = nn.Embedding(self.max_path_len, self.hidden_size)
+        self.node_weight_mlp = nn.Sequential(
+            nn.Linear(7, 64),
+            nn.SiLU(),
+            nn.Linear(64, 1),
+        )
+        self.endpoint_proj = nn.Sequential(
+            nn.LayerNorm(4 * self.hidden_size),
+            nn.Linear(4 * self.hidden_size, self.hidden_size),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, self.hidden_size),
+        )
+        self.feature_proj = nn.Sequential(
+            nn.Linear(9, self.hidden_size),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, self.hidden_size),
+        )
+        self.out_norm = nn.LayerNorm(self.hidden_size)
+        self.out_proj = nn.Linear(self.hidden_size, self.hidden_size)
+        self.pair_type = nn.Parameter(torch.zeros(self.hidden_size))
+
+        self.register_buffer("pair_path_ids", path_ids, persistent=False)
+        self.register_buffer("pair_path_roles", path_roles, persistent=False)
+        self.register_buffer("pair_path_valid", path_valid, persistent=False)
+        self.register_buffer("pair_path_progress", path_progress, persistent=False)
+        self.register_buffer("pair_features", pair_features, persistent=False)
+
+        self.apply(_init_module_weights)
+        with torch.no_grad():
+            self.role_embedder.weight[0].zero_()
+            self.pair_type.normal_(mean=0.0, std=0.02)
+
+    def _build_pair_path_buffers(self, config, expanded_term_to_id):
+        mapping_path = self._resolve_path(getattr(config, "go_dag_mapping_path", "go_mapping.pkl"))
+        ontology_path = self._resolve_path(getattr(config, "go_dag_ontology_path", "go-basic.obo"))
+
+        term_to_id = {}
+        id_to_term = {}
+        if mapping_path and os.path.exists(mapping_path):
+            with open(mapping_path, "rb") as handle:
+                term_to_id = pickle.load(handle)
+            id_to_term = {idx: term for term, idx in term_to_id.items()}
+        else:
+            warnings.warn(
+                f"GO pair mapping file not found: {mapping_path}. Pair paths will use local GO ids."
+            )
+
+        parents = {}
+        depths = {}
+        if ontology_path and os.path.exists(ontology_path):
+            try:
+                parents, depths = self._load_ontology_dag(ontology_path)
+            except Exception as exc:
+                warnings.warn(f"Failed to load GO ontology for pair paths from {ontology_path}: {exc}")
+        else:
+            warnings.warn(
+                f"GO ontology file not found for pair paths: {ontology_path}. Falling back to direct pairs."
+            )
+
+        expanded_term_to_id = dict(expanded_term_to_id or term_to_id)
+        for go_idx in range(self.original_go_num):
+            leaf = id_to_term.get(go_idx, f"LOCAL_GO:{go_idx}")
+            if leaf not in expanded_term_to_id:
+                expanded_term_to_id[leaf] = go_idx
+
+        cache_path = self._resolve_path(
+            getattr(config, "go_pair_path_cache_path", "go_pair_path_buffers.pt")
+        )
+        cache_meta = self._pair_cache_meta(
+            mapping_path=mapping_path,
+            ontology_path=ontology_path,
+            expanded_go_num=len(expanded_term_to_id),
+        )
+        cached = self._load_pair_cache(cache_path, cache_meta)
+        if cached is not None:
+            path_ids, path_roles, path_valid, path_progress, pair_features = cached
+            return (
+                path_ids,
+                path_roles,
+                path_valid,
+                path_progress,
+                pair_features,
+                len(expanded_term_to_id),
+            )
+
+        max_depth = max([float(value) for value in depths.values()], default=1.0)
+        max_depth = max(max_depth, 1.0)
+
+        path_ids = torch.zeros(
+            self.original_go_num, self.original_go_num, self.max_path_len, dtype=torch.long
+        )
+        path_roles = torch.zeros_like(path_ids)
+        path_valid = torch.zeros_like(path_ids, dtype=torch.bool)
+        path_progress = torch.zeros_like(path_ids, dtype=torch.float)
+        pair_features = torch.zeros(
+            self.original_go_num, self.original_go_num, 8, dtype=torch.float
+        )
+        term_list = [
+            id_to_term.get(go_idx, f"LOCAL_GO:{go_idx}")
+            for go_idx in range(self.original_go_num)
+        ]
+        ancestor_distance_cache = {
+            term: self._ancestor_distances(term, parents)
+            for term in term_list
+        }
+        path_cache = {}
+
+        for left_idx in range(self.original_go_num):
+            left = term_list[left_idx]
+            for right_idx in range(self.original_go_num):
+                right = term_list[right_idx]
+                terms, roles, lca, up_len, down_len = self._build_pair_path(
+                    left,
+                    right,
+                    parents,
+                    depths,
+                    ancestor_distance_cache=ancestor_distance_cache,
+                    path_cache=path_cache,
+                )
+                terms, roles = self._compress_path(terms, roles)
+
+                left_depth = float(depths.get(left, 1.0))
+                right_depth = float(depths.get(right, 1.0))
+                lca_depth = float(depths.get(lca, 0.0)) if lca is not None else 0.0
+                leaf_depth = max(left_depth, right_depth, 1.0)
+
+                for pos, (term, role) in enumerate(zip(terms, roles)):
+                    if pos >= self.max_path_len:
+                        break
+                    path_ids[left_idx, right_idx, pos] = self._term_to_embed_id(
+                        term, expanded_term_to_id, left_idx if pos == 0 else right_idx
+                    )
+                    path_roles[left_idx, right_idx, pos] = role
+                    path_valid[left_idx, right_idx, pos] = True
+                    path_progress[left_idx, right_idx, pos] = min(
+                        max(float(depths.get(term, leaf_depth)) / leaf_depth, 0.0), 1.0
+                    )
+
+                same_branch = float(lca == left or lca == right)
+                lca_is_root = float(lca == self.root_term)
+                path_len = max(up_len + down_len, len(terms) - 1, 0)
+                pair_features[left_idx, right_idx] = torch.tensor(
+                    [
+                        min(left_depth / max_depth, 1.0),
+                        min(right_depth / max_depth, 1.0),
+                        min(lca_depth / max_depth, 1.0),
+                        min(float(path_len) / max(float(self.max_path_len), 1.0), 1.0),
+                        min(float(up_len) / max(float(self.max_path_len), 1.0), 1.0),
+                        min(float(down_len) / max(float(self.max_path_len), 1.0), 1.0),
+                        same_branch,
+                        lca_is_root,
+                    ],
+                    dtype=torch.float,
+                )
+
+        self._save_pair_cache(
+            cache_path,
+            cache_meta,
+            path_ids,
+            path_roles,
+            path_valid,
+            path_progress,
+            pair_features,
+        )
+        return (
+            path_ids,
+            path_roles,
+            path_valid,
+            path_progress,
+            pair_features,
+            len(expanded_term_to_id),
+        )
+
+    def _safe_mtime(self, path):
+        if path and os.path.exists(path):
+            return os.path.getmtime(path)
+        return None
+
+    def _pair_cache_meta(self, mapping_path, ontology_path, expanded_go_num):
+        return {
+            "original_go_num": self.original_go_num,
+            "max_path_len": self.max_path_len,
+            "root_term": self.root_term,
+            "skip_root": self.skip_root,
+            "expanded_go_num": int(expanded_go_num),
+            "mapping_mtime": self._safe_mtime(mapping_path),
+            "ontology_mtime": self._safe_mtime(ontology_path),
+        }
+
+    def _load_pair_cache(self, path, expected_meta):
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            payload = torch.load(path, map_location="cpu")
+        except Exception as exc:
+            warnings.warn(f"Failed to load GO pair path cache {path}: {exc}")
+            return None
+        if not isinstance(payload, dict) or payload.get("meta") != expected_meta:
+            return None
+        required = ["path_ids", "path_roles", "path_valid", "path_progress", "pair_features"]
+        if any(key not in payload for key in required):
+            return None
+        tensors = tuple(payload[key] for key in required)
+        expected_shape = (self.original_go_num, self.original_go_num, self.max_path_len)
+        if tensors[0].shape != expected_shape:
+            return None
+        return tensors
+
+    def _save_pair_cache(
+        self,
+        path,
+        meta,
+        path_ids,
+        path_roles,
+        path_valid,
+        path_progress,
+        pair_features,
+    ):
+        if not path:
+            return
+        payload = {
+            "meta": meta,
+            "path_ids": path_ids.cpu(),
+            "path_roles": path_roles.cpu(),
+            "path_valid": path_valid.cpu(),
+            "path_progress": path_progress.cpu(),
+            "pair_features": pair_features.cpu(),
+        }
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            tmp_path = f"{path}.{os.getpid()}.tmp"
+            torch.save(payload, tmp_path)
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            warnings.warn(f"Failed to save GO pair path cache {path}: {exc}")
+
+    def _load_ontology_dag(self, ontology_path):
+        parents = {}
+        obsolete = set()
+        current = None
+
+        def flush(term):
+            if term is None or "id" not in term:
+                return
+            term_id = term["id"]
+            if term.get("is_obsolete", False):
+                obsolete.add(term_id)
+                return
+            parents[term_id] = term.get("parents", [])
+            for alt_id in term.get("alt_ids", []):
+                parents[alt_id] = term.get("parents", [])
+
+        with open(ontology_path, "r") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line == "[Term]":
+                    flush(current)
+                    current = {"parents": [], "alt_ids": [], "is_obsolete": False}
+                    continue
+                if line == "[Typedef]":
+                    flush(current)
+                    current = None
+                    continue
+                if current is None:
+                    continue
+                if line.startswith("id: "):
+                    current["id"] = line.split("id: ", 1)[1]
+                elif line.startswith("alt_id: "):
+                    current["alt_ids"].append(line.split("alt_id: ", 1)[1])
+                elif line.startswith("is_a: "):
+                    current["parents"].append(line.split("is_a: ", 1)[1].split(" ! ", 1)[0])
+                elif line == "is_obsolete: true":
+                    current["is_obsolete"] = True
+            flush(current)
+
+        for term_id in list(parents.keys()):
+            if term_id in obsolete:
+                parents.pop(term_id, None)
+                continue
+            parents[term_id] = [parent for parent in parents[term_id] if parent in parents]
+
+        children = {term: [] for term in parents}
+        for term, term_parents in parents.items():
+            for parent in term_parents:
+                children[parent].append(term)
+
+        depths = {self.root_term: 0.0}
+        queue = [self.root_term]
+        for term in queue:
+            for child in children.get(term, []):
+                child_depth = depths[term] + 1.0
+                if child not in depths or child_depth < depths[child]:
+                    depths[child] = child_depth
+                    queue.append(child)
+
+        return parents, depths
+
+    def _resolve_path(self, path):
+        if path is None:
+            return None
+        if os.path.isabs(path):
+            return path
+
+        candidates = []
+        repo_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+        )
+        candidates.append(os.path.join(repo_root, path))
+        try:
+            from hydra.utils import get_original_cwd
+
+            candidates.append(os.path.abspath(os.path.join(get_original_cwd(), path)))
+        except Exception:
+            pass
+
+        env_pwd = os.environ.get("PWD")
+        if env_pwd:
+            candidates.append(os.path.abspath(os.path.join(env_pwd, path)))
+        candidates.append(os.path.abspath(path))
+
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return candidate
+        return candidates[0]
+
+    def _ancestor_distances(self, term, parents):
+        if term not in parents:
+            return {term: 0}
+        distances = {}
+        queue = [(term, 0)]
+        for current, dist in queue:
+            if current in distances and distances[current] <= dist:
+                continue
+            distances[current] = dist
+            for parent in parents.get(current, []):
+                queue.append((parent, dist + 1))
+        return distances
+
+    def _path_to_ancestor(self, term, ancestor, parents):
+        if term == ancestor:
+            return [term]
+        queue = [[term]]
+        visited = set()
+        for path in queue:
+            current = path[-1]
+            if current in visited:
+                continue
+            visited.add(current)
+            for parent in parents.get(current, []):
+                next_path = path + [parent]
+                if parent == ancestor:
+                    return next_path
+                queue.append(next_path)
+        return [term]
+
+    def _build_pair_path(
+        self,
+        left,
+        right,
+        parents,
+        depths,
+        ancestor_distance_cache=None,
+        path_cache=None,
+    ):
+        if left == right:
+            return [left], [2], left, 0, 0
+
+        if ancestor_distance_cache is None:
+            left_dists = self._ancestor_distances(left, parents)
+            right_dists = self._ancestor_distances(right, parents)
+        else:
+            left_dists = ancestor_distance_cache.get(left, {left: 0})
+            right_dists = ancestor_distance_cache.get(right, {right: 0})
+        common = set(left_dists) & set(right_dists)
+        if not common:
+            return [left, right], [1, 3], None, 1, 1
+
+        lca = min(
+            common,
+            key=lambda term: (
+                left_dists[term] + right_dists[term],
+                -float(depths.get(term, 0.0)),
+                term,
+            ),
+        )
+
+        def cached_path(term, ancestor):
+            key = (term, ancestor)
+            if path_cache is not None and key in path_cache:
+                return path_cache[key]
+            path = self._path_to_ancestor(term, ancestor, parents)
+            if path_cache is not None:
+                path_cache[key] = path
+            return path
+
+        left_path = cached_path(left, lca)
+        right_path = cached_path(right, lca)
+        terms = left_path + list(reversed(right_path[:-1]))
+        roles = []
+        for idx, term in enumerate(terms):
+            if term == lca:
+                roles.append(2)
+            elif idx < len(left_path):
+                roles.append(1)
+            else:
+                roles.append(3)
+
+        if self.skip_root and len(terms) > 1:
+            filtered = [(term, role) for term, role in zip(terms, roles) if term != self.root_term]
+            if filtered:
+                terms, roles = zip(*filtered)
+                terms, roles = list(terms), list(roles)
+
+        if not terms:
+            return [left, right], [1, 3], lca, left_dists[lca], right_dists[lca]
+        return terms, roles, lca, left_dists[lca], right_dists[lca]
+
+    def _compress_path(self, terms, roles):
+        if len(terms) <= self.max_path_len:
+            return terms, roles
+        keep = {0, len(terms) - 1}
+        for idx, role in enumerate(roles):
+            if role == 2:
+                keep.add(idx)
+                break
+
+        remaining = self.max_path_len - len(keep)
+        candidates = [idx for idx in range(len(terms)) if idx not in keep]
+        if remaining > 0 and candidates:
+            if remaining == 1:
+                keep.add(candidates[len(candidates) // 2])
+            else:
+                last = len(candidates) - 1
+                for pos in range(remaining):
+                    keep.add(candidates[round(pos * last / (remaining - 1))])
+
+        selected = sorted(keep)[: self.max_path_len]
+        return [terms[idx] for idx in selected], [roles[idx] for idx in selected]
+
+    def _term_to_embed_id(self, term, expanded_term_to_id, fallback_idx):
+        if term in expanded_term_to_id:
+            return int(expanded_term_to_id[term])
+        if 0 <= fallback_idx < self.original_go_num:
+            return int(fallback_idx)
+        return 0
+
+    def _embedder_num_classes(self, embedder):
+        if hasattr(embedder, "original_module"):
+            return int(embedder.original_module.num_classes)
+        return int(embedder.num_classes)
+
+    def forward(self, class_tensor, cond_t=None, leaf_embedder=None, valid_mask=None):
+        if leaf_embedder is None:
+            raise ValueError("GOPathPairConditioner requires the shared expanded GO embedder.")
+
+        if class_tensor.dim() == 1:
+            class_tensor = class_tensor.unsqueeze(0)
+        bsz, cond_len = class_tensor.shape
+        if cond_len < 2 or self.max_pairs <= 0:
+            empty_tokens = class_tensor.new_zeros((bsz, 0, self.hidden_size), dtype=torch.float)
+            empty_mask = torch.zeros((bsz, 0), device=class_tensor.device, dtype=torch.bool)
+            return empty_tokens, empty_mask
+
+        if valid_mask is None:
+            valid_mask = (class_tensor >= 0) & (class_tensor < self.original_go_num)
+        else:
+            valid_mask = valid_mask & (class_tensor >= 0) & (class_tensor < self.original_go_num)
+
+        pair_i, pair_j = torch.triu_indices(cond_len, cond_len, offset=1, device=class_tensor.device)
+        if pair_i.numel() > self.max_pairs:
+            pair_i = pair_i[: self.max_pairs]
+            pair_j = pair_j[: self.max_pairs]
+
+        safe_ids = torch.where(valid_mask, class_tensor, torch.zeros_like(class_tensor))
+        safe_ids = safe_ids.clamp(min=0, max=self.original_go_num - 1)
+        left_ids = safe_ids[:, pair_i]
+        right_ids = safe_ids[:, pair_j]
+        pair_valid = valid_mask[:, pair_i] & valid_mask[:, pair_j] & (left_ids != right_ids)
+        if self.training and self.drop_prob > 0:
+            keep_pair = torch.rand(pair_valid.shape, device=pair_valid.device) >= self.drop_prob
+            pair_valid = pair_valid & keep_pair
+        lookup_left = torch.minimum(left_ids, right_ids)
+        lookup_right = torch.maximum(left_ids, right_ids)
+        pair_key = lookup_left * self.original_go_num + lookup_right
+        invalid_pair_key = torch.full_like(pair_key, self.original_go_num * self.original_go_num)
+        pair_key = torch.where(pair_valid, pair_key, invalid_pair_key)
+        pair_order = pair_key.argsort(dim=1)
+        left_ids = torch.gather(left_ids, 1, pair_order)
+        right_ids = torch.gather(right_ids, 1, pair_order)
+        lookup_left = torch.gather(lookup_left, 1, pair_order)
+        lookup_right = torch.gather(lookup_right, 1, pair_order)
+        pair_valid = torch.gather(pair_valid, 1, pair_order)
+
+        if cond_t is None:
+            noise = torch.zeros(bsz, device=class_tensor.device, dtype=torch.float)
+        else:
+            if cond_t.dim() > 1:
+                cond_t = cond_t.float().amax(dim=-1)
+            noise = cond_t.float().to(class_tensor.device) / max(self.num_timesteps, 1)
+            noise = noise.clamp(0.0, 1.0)
+
+        path_ids = self.pair_path_ids[lookup_left, lookup_right]
+        path_roles = self.pair_path_roles[lookup_left, lookup_right]
+        path_valid = self.pair_path_valid[lookup_left, lookup_right] & pair_valid.unsqueeze(-1)
+        path_progress = self.pair_path_progress[lookup_left, lookup_right]
+        pair_features = self.pair_features[lookup_left, lookup_right]
+
+        path_emb = leaf_embedder(path_ids)
+        path_emb = path_emb + self.role_embedder(path_roles)
+        pos_ids = torch.arange(self.max_path_len, device=class_tensor.device)
+        path_emb = path_emb + self.position_embedder(pos_ids).view(1, 1, self.max_path_len, -1)
+
+        target_progress = (1.0 - noise).view(bsz, 1, 1).expand_as(path_progress)
+        noise_feat = noise.view(bsz, 1, 1).expand_as(path_progress)
+        node_features = torch.stack(
+            [
+                path_progress,
+                1.0 - path_progress,
+                noise_feat,
+                target_progress,
+                (path_roles == 1).to(path_progress.dtype),
+                (path_roles == 2).to(path_progress.dtype),
+                (path_roles == 3).to(path_progress.dtype),
+            ],
+            dim=-1,
+        )
+        tau = self.log_tau.exp().clamp(0.02, 1.0)
+        prior_logits = -torch.abs(path_progress - target_progress) / tau
+        learned_logits = self.node_weight_mlp(node_features).squeeze(-1)
+        logits = self.prior_scale * prior_logits + self.learned_scale * learned_logits
+        logits = logits.masked_fill(~path_valid, -1e4)
+
+        weights = torch.softmax(logits, dim=-1) * path_valid.to(logits.dtype)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        path_token = torch.sum(path_emb * weights.unsqueeze(-1), dim=2)
+
+        null_id = self._embedder_num_classes(leaf_embedder)
+        null_left = torch.full_like(left_ids, null_id)
+        null_right = torch.full_like(right_ids, null_id)
+        left_embed = leaf_embedder(torch.where(pair_valid, left_ids, null_left))
+        right_embed = leaf_embedder(torch.where(pair_valid, right_ids, null_right))
+        left_embed = torch.where(pair_valid.unsqueeze(-1), left_embed, torch.zeros_like(left_embed))
+        right_embed = torch.where(pair_valid.unsqueeze(-1), right_embed, torch.zeros_like(right_embed))
+
+        endpoint_features = torch.cat(
+            [
+                left_embed + right_embed,
+                torch.abs(left_embed - right_embed),
+                left_embed * right_embed,
+                path_token,
+            ],
+            dim=-1,
+        )
+        endpoint_token = self.endpoint_proj(endpoint_features)
+        pair_feature_input = torch.cat(
+            [pair_features, noise.view(bsz, 1, 1).expand(-1, pair_features.size(1), 1)],
+            dim=-1,
+        )
+        feature_gate = torch.sigmoid(self.feature_proj(pair_feature_input))
+        pair_token = endpoint_token + feature_gate * path_token + self.pair_type.view(1, 1, -1)
+        pair_token = self.out_proj(self.out_norm(pair_token))
+
+        pair_count = pair_valid.sum(dim=1, keepdim=True).clamp_min(1).to(pair_token.dtype)
+        pair_token = self.token_scale * pair_token / pair_count.sqrt().unsqueeze(-1)
+        pair_token = torch.where(pair_valid.unsqueeze(-1), pair_token, torch.zeros_like(pair_token))
+        return pair_token, pair_valid
+
+
 class CFPGenEncoder(EsmEncoder):
     def __init__(self, config):
         nn.Module.__init__(self)
@@ -1752,9 +2365,13 @@ class CFPGenEncoderDPLM2(EsmEncoder):
 
         self.use_go_null_token = config.use_go_null_token
         self.use_go_dag_condition = bool(getattr(config, "use_go_dag_condition", False))
+        self.use_go_pair_condition = bool(getattr(config, "use_go_pair_condition", False))
         if self.use_go_dag_condition:
             self.use_ipr = False
             self.use_ec = False
+        elif self.use_go_pair_condition:
+            warnings.warn("GO pair-path conditioning requires use_go_dag_condition=True; disabling pair tokens.")
+            self.use_go_pair_condition = False
 
         if self.use_go:
             self.go_input_class_num = config.go_num
@@ -1769,6 +2386,11 @@ class CFPGenEncoderDPLM2(EsmEncoder):
                 self.go_class_num = config.go_num
             self.go_embedder = FuncTagEmbedder(self.go_class_num, config.hidden_size)
             self.go_embedder.apply(_init_module_weights)
+            if self.use_go_dag_condition and self.use_go_pair_condition:
+                self.go_pair_conditioner = GOPathPairConditioner(
+                    config,
+                    expanded_term_to_id=self.go_dag_conditioner.expanded_term_to_id,
+                )
             if self.use_go_null_token:
                 self.go_null_token = nn.Parameter(torch.zeros(config.hidden_size))
                 self.go_null_token.data.normal_(mean=0.0, std=0.02)
@@ -1886,6 +2508,16 @@ class CFPGenEncoderDPLM2(EsmEncoder):
             leaf_embedder=self.go_embedder,
             valid_mask=valid_mask,
         )
+        if self.use_go_pair_condition:
+            pair_embed, pair_mask = self.go_pair_conditioner(
+                class_tensor,
+                cond_t=cond_t,
+                leaf_embedder=self.go_embedder,
+                valid_mask=valid_mask,
+            )
+            if pair_embed.size(1) > 0:
+                go_embed = torch.cat([go_embed, pair_embed], dim=1)
+                valid_mask = torch.cat([valid_mask, pair_mask], dim=1)
         return go_embed, valid_mask
 
 

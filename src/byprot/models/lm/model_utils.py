@@ -145,6 +145,17 @@ def get_net(cfg):
             config.go_dag_prior_scale = getattr(cfg, "go_dag_prior_scale", 1.0)
             config.go_dag_learned_scale = getattr(cfg, "go_dag_learned_scale", 0.1)
             config.go_dag_use_leaf_embed = getattr(cfg, "go_dag_use_leaf_embed", True)
+            config.use_go_pair_condition = getattr(cfg, "use_go_pair_condition", False)
+            config.go_pair_max_pairs = getattr(cfg, "go_pair_max_pairs", 24)
+            config.go_pair_max_path_len = getattr(cfg, "go_pair_max_path_len", 12)
+            config.go_pair_drop = getattr(cfg, "go_pair_drop", 0.1)
+            config.go_pair_token_scale = getattr(cfg, "go_pair_token_scale", 0.35)
+            config.go_pair_tau = getattr(cfg, "go_pair_tau", 0.18)
+            config.go_pair_prior_scale = getattr(cfg, "go_pair_prior_scale", 1.0)
+            config.go_pair_learned_scale = getattr(cfg, "go_pair_learned_scale", 0.1)
+            config.go_pair_path_cache_path = getattr(
+                cfg, "go_pair_path_cache_path", "go_pair_path_buffers.pt"
+            )
 
             # print(f"config: {config}")
             if 'cond' in cfg:

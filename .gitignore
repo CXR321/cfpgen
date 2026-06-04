@@ -153,6 +153,8 @@ run/logs
 
 # model weight
 *.ckpt
+go_pair_path_buffers.pt
+go_pair_path_buffers.pt.*.tmp
 
 # pdb
 *.pdb

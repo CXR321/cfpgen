@@ -109,6 +109,15 @@ class CFPGENConfig_DPLM2:
     go_dag_prior_scale: float = field(default=1.0)
     go_dag_learned_scale: float = field(default=0.1)
     go_dag_use_leaf_embed: bool = field(default=True)
+    use_go_pair_condition: bool = field(default=False)
+    go_pair_max_pairs: int = field(default=24)
+    go_pair_max_path_len: int = field(default=12)
+    go_pair_drop: float = field(default=0.1)
+    go_pair_token_scale: float = field(default=0.35)
+    go_pair_tau: float = field(default=0.18)
+    go_pair_prior_scale: float = field(default=1.0)
+    go_pair_learned_scale: float = field(default=0.1)
+    go_pair_path_cache_path: str = field(default="go_pair_path_buffers.pt")
 
 
 @register_model('cfp_gen')

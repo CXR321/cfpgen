@@ -31,7 +31,7 @@ exp=cfpgen/cfpgen_650m_stage1_dplm2
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_sn-pn-lora-wandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_dm_ca_me-scale-0.2_weight-headclloss-2.0_godag-dyncond_sn-pnwandb
 # model_name=cfpgen_general_dataset_stage1_dplm2_goonly_alldata_struct_only
-model_name=codfp-dag_go
+model_name=codfp-dag_go_pairpath
 
 # model_name=cfpgen_general_dataset_stage1_dplm2_motifonly_structmaskNone_pfamNone
 # model_name=debug

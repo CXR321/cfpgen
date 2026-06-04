@@ -90,6 +90,15 @@ model:
   go_dag_prior_scale: 1.0
   go_dag_learned_scale: 0.1
   go_dag_use_leaf_embed: true
+  use_go_pair_condition: true
+  go_pair_max_pairs: 24
+  go_pair_max_path_len: 12
+  go_pair_drop: 0.1
+  go_pair_token_scale: 0.35
+  go_pair_tau: 0.18
+  go_pair_prior_scale: 1.0
+  go_pair_learned_scale: 0.1
+  go_pair_path_cache_path: go_pair_path_buffers.pt
 
 
   use_only_struct: false
